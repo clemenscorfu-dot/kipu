@@ -1,20 +1,34 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { ensureIdeaCategory } from "@/lib/kipu-category-manager";
+
+type Idea={id:string;title:string;summary:string|null;tags:string[];enrichment:Record<string,unknown>|null};
+type Category={id:string;name:string;parent_id:string|null;description:string|null};
+type Plan={categories:Array<{key:string;name:string;description:string}>;assignments:Array<{idea_id:string;existing_category_id:string|null;new_category_key:string|null}>};
+
+function responseText(payload:any){if(typeof payload.output_text==="string"&&payload.output_text.trim())return payload.output_text;for(const o of payload.output??[])for(const c of o.content??[])if(typeof c?.text==="string"&&c.text.trim())return c.text;return null}
+
+async function buildPlan(openAiKey:string,ideas:Idea[],existing:Category[]):Promise<Plan>{
+ const schema={type:"object",additionalProperties:false,properties:{categories:{type:"array",maxItems:8,items:{type:"object",additionalProperties:false,properties:{key:{type:"string"},name:{type:"string"},description:{type:"string"}},required:["key","name","description"]}},assignments:{type:"array",items:{type:"object",additionalProperties:false,properties:{idea_id:{type:"string"},existing_category_id:{anyOf:[{type:"string"},{type:"null"}]},new_category_key:{anyOf:[{type:"string"},{type:"null"}]}},required:["idea_id","existing_category_id","new_category_key"]}}},required:["categories","assignments"]};
+ const prompt=`Du bist der Taxonomy Curator von Kipu, einem persönlichen Gedächtnis. Organisiere ALLE untenstehenden bisher unzugeordneten Erinnerungen gemeinsam.\n\nZiel:\n- Jede Erinnerung bekommt genau EINE Kategorie.\n- Kategorien sind grobe, langfristig nützliche Navigation, nicht Tags.\n- Ziel insgesamt ungefähr 5–12 Hauptkategorien, wenn der Bestand gross genug wird; bei kleinem/einseitigem Bestand entsprechend weniger.\n- Keine Kategorien für einzelne Marken, Personen, Autoren, einzelne Produkte oder einzelne Titel.\n- Ähnliche Erinnerungen sollen dieselbe Kategorie erhalten.\n- Bestehende Kategorien immer bevorzugen, wenn sie sinnvoll passen.\n- Für diesen Backfill nur Hauptkategorien erstellen; Unterkategorien können später entstehen.\n- Erstelle nur Kategorien, die für mindestens eine der vorliegenden Erinnerungen sinnvoll sind.\n- new_category_key verweist auf key aus categories. Pro Assignment ist genau eines von existing_category_id oder new_category_key gesetzt.\n- Verwende ausschließlich die gelieferten idea_id und bestehenden Kategorie-IDs.\n\nBestehende Kategorien:\n${JSON.stringify(existing)}\n\nUnzugeordnete Erinnerungen:\n${JSON.stringify(ideas.map(i=>({id:i.id,title:i.title,summary:i.summary,tags:i.tags,legacy_category:i.enrichment?.category??null})))}`;
+ const r=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${openAiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-5.6-luna",input:prompt,text:{format:{type:"json_schema",name:"taxonomy_backfill",strict:true,schema}}})});
+ if(!r.ok)throw new Error(`taxonomy_openai_${r.status}`);const payload=await r.json();const text=responseText(payload);if(!text)throw new Error("taxonomy_no_output");return JSON.parse(text) as Plan;
+}
 
 export async function POST(request:Request){
-  try{
-    const token=request.headers.get("authorization")?.replace(/^Bearer /,"");if(!token)return NextResponse.json({error:"Nicht angemeldet."},{status:401});
-    const url=process.env.NEXT_PUBLIC_SUPABASE_URL,key=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,openAiKey=process.env.OPENAI_API_KEY;if(!url||!key||!openAiKey)return NextResponse.json({error:"Server-Konfiguration unvollständig."},{status:500});
-    const supabase=createClient(url,key,{global:{headers:{Authorization:`Bearer ${token}`}},auth:{persistSession:false,autoRefreshToken:false}});
-    const{data:userData,error:userError}=await supabase.auth.getUser(token);if(userError||!userData.user)return NextResponse.json({error:"Session ungültig."},{status:401});const userId=userData.user.id;
-    const[{data:ideas,error:ideasError},{data:assignments,error:assignError}]=await Promise.all([
-      supabase.from("ideas").select("id,title,summary,tags,enrichment,created_at").eq("user_id",userId).order("created_at",{ascending:true}),
-      supabase.from("idea_categories").select("idea_id,category_id")
-    ]);if(ideasError)throw ideasError;if(assignError)throw assignError;
-    const assigned=new Set((assignments??[]).map((a:any)=>a.idea_id));const pending=(ideas??[]).filter((i:any)=>!assigned.has(i.id)&&i.enrichment?.processing_status!=="pending"&&i.enrichment?.processing_status!=="processing"&&i.enrichment?.processing_status!=="merged").slice(0,20);
-    let categorized=0;const failures:string[]=[];
-    for(const idea of pending){try{await ensureIdeaCategory(supabase,userId,openAiKey,idea);categorized++}catch(e){failures.push(`${idea.id}:${e instanceof Error?e.message:"failed"}`)}}
-    return NextResponse.json({ok:true,found:pending.length,categorized,failures});
-  }catch(e){console.error("category backfill failed",e);return NextResponse.json({error:e instanceof Error?e.message:"Backfill fehlgeschlagen."},{status:500})}
+ try{
+  const token=request.headers.get("authorization")?.replace(/^Bearer /,"");if(!token)return NextResponse.json({error:"Nicht angemeldet."},{status:401});
+  const url=process.env.NEXT_PUBLIC_SUPABASE_URL,key=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,openAiKey=process.env.OPENAI_API_KEY;if(!url||!key||!openAiKey)return NextResponse.json({error:"Server-Konfiguration unvollständig."},{status:500});
+  const supabase=createClient(url,key,{global:{headers:{Authorization:`Bearer ${token}`}},auth:{persistSession:false,autoRefreshToken:false}});const{data:userData,error:userError}=await supabase.auth.getUser(token);if(userError||!userData.user)return NextResponse.json({error:"Session ungültig."},{status:401});const userId=userData.user.id;
+  const[{data:ideas,error:ideasError},{data:assignments,error:assignError},{data:categories,error:catError}]=await Promise.all([
+   supabase.from("ideas").select("id,title,summary,tags,enrichment,created_at").eq("user_id",userId).order("created_at",{ascending:true}),
+   supabase.from("idea_categories").select("idea_id,category_id"),
+   supabase.from("categories").select("id,name,parent_id,description").eq("user_id",userId).order("created_at")
+  ]);if(ideasError)throw ideasError;if(assignError)throw assignError;if(catError)throw catError;
+  const assigned=new Set((assignments??[]).map((a:any)=>a.idea_id));const pending=((ideas??[]) as Idea[]).filter((i:any)=>!assigned.has(i.id)&&!["pending","processing","merged"].includes(i.enrichment?.processing_status??"" )).slice(0,50);if(!pending.length)return NextResponse.json({ok:true,found:0,categorized:0,created:[]});
+  const existing=(categories??[]) as Category[];const plan=await buildPlan(openAiKey,pending,existing);const validIdeaIds=new Set(pending.map(i=>i.id));const validExisting=new Set(existing.map(c=>c.id));const createdByKey=new Map<string,string>();const createdNames:string[]=[];
+  for(const proposed of plan.categories){if(!proposed.key?.trim()||!proposed.name?.trim()||createdByKey.has(proposed.key))continue;const duplicate=existing.find(c=>c.name.localeCompare(proposed.name,"de",{sensitivity:"base"})===0);if(duplicate){createdByKey.set(proposed.key,duplicate.id);continue}const{data,error}=await supabase.from("categories").insert({user_id:userId,parent_id:null,name:proposed.name.trim(),description:proposed.description?.trim()||null}).select("id,name").single();if(error){const{data:found}=await supabase.from("categories").select("id,name").eq("user_id",userId).ilike("name",proposed.name.trim()).maybeSingle();if(found?.id)createdByKey.set(proposed.key,found.id);else console.error("taxonomy category create failed",proposed,error)}else{createdByKey.set(proposed.key,data.id);createdNames.push(data.name)}}
+  let categorized=0;const failures:string[]=[];
+  for(const a of plan.assignments){if(!validIdeaIds.has(a.idea_id))continue;let categoryId:string|null=null;if(a.existing_category_id&&validExisting.has(a.existing_category_id))categoryId=a.existing_category_id;if(!categoryId&&a.new_category_key)categoryId=createdByKey.get(a.new_category_key)??null;if(!categoryId){failures.push(`${a.idea_id}:no_category`);continue}const{error}=await supabase.from("idea_categories").upsert({idea_id:a.idea_id,category_id:categoryId},{onConflict:"idea_id,category_id"});if(error)failures.push(`${a.idea_id}:${error.message}`);else categorized++}
+  console.info("taxonomy backfill result",{found:pending.length,categorized,created:createdNames,failures});return NextResponse.json({ok:true,found:pending.length,categorized,created:createdNames,failures});
+ }catch(e){console.error("category backfill failed",e);return NextResponse.json({error:e instanceof Error?e.message:"Backfill fehlgeschlagen."},{status:500})}
 }
