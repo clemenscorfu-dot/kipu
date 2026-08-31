@@ -12,7 +12,7 @@ type IdeaRow = {
   tags: string[];
   location_label: string | null;
   created_at: string;
-  enrichment: { category?: string; image_url?: string | null };
+  enrichment: { category?: string; image_url?: string | null; image_fit?: "cover" | "contain" };
 };
 
 function emojiFor(category?: string) {
@@ -67,10 +67,11 @@ export default function IdeasPage() {
           {ideas.map((idea) => {
             const category = idea.enrichment?.category;
             const image = idea.enrichment?.image_url;
+            const fit = idea.enrichment?.image_fit ?? "cover";
             const date = new Date(idea.created_at).toLocaleDateString("de-CH");
             return <Link href={`/ideas/${idea.id}`} key={idea.id} className="flex gap-3 rounded-[14px] bg-white p-2 shadow-[0_2px_10px_rgba(0,0,0,.06)]">
               <div className="flex h-[82px] w-[88px] shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-[#e8ece4] text-[30px]">
-                {image ? <img src={image} alt="" className="h-full w-full object-contain p-1" referrerPolicy="no-referrer" /> : emojiFor(category)}
+                {image ? <img src={image} alt="" className={`h-full w-full ${fit === "contain" ? "object-contain p-1" : "object-cover"}`} referrerPolicy="no-referrer" /> : emojiFor(category)}
               </div>
               <div className="min-w-0 flex-1 py-1">
                 <h2 className="line-clamp-2 text-[15px] font-semibold leading-5">{idea.title}</h2>
