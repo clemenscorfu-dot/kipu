@@ -1,11 +1,14 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 export type AgentToolResult = Record<string, unknown>;
+export type AgentToolContext = {
+  supabase?: SupabaseClient;
+  userId?: string;
+  openAiKey?: string;
+};
 
 function absoluteUrl(value: string, base: string) {
-  try {
-    return new URL(value, base).toString();
-  } catch {
-    return null;
-  }
+  try { return new URL(value, base).toString(); } catch { return null; }
 }
 
 function getMeta(html: string, patterns: RegExp[]) {
@@ -18,138 +21,107 @@ function getMeta(html: string, patterns: RegExp[]) {
 
 export async function inspectWebPage(url: string): Promise<AgentToolResult> {
   try {
-    const response = await fetch(url, {
-      redirect: "follow",
-      headers: { "User-Agent": "Mozilla/5.0 KipuBot/1.0" },
-      signal: AbortSignal.timeout(6000),
-    });
-
-    if (!response.ok) {
-      return { ok: false, url, status: response.status };
-    }
-
+    const response = await fetch(url, { redirect: "follow", headers: { "User-Agent": "Mozilla/5.0 KipuBot/0.2" }, signal: AbortSignal.timeout(6500) });
+    if (!response.ok) return { ok: false, url, status: response.status };
     const finalUrl = response.url || url;
     const contentType = response.headers.get("content-type") || "";
-    if (!contentType.includes("text/html")) {
-      return { ok: false, url: finalUrl, reason: "not_html", contentType };
-    }
-
-    const html = (await response.text()).slice(0, 750_000);
-    const title = getMeta(html, [
-      /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i,
-      /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i,
-      /<title[^>]*>([^<]+)<\/title>/i,
-    ]);
-    const description = getMeta(html, [
-      /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i,
-      /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i,
-      /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i,
-    ]);
-
-    const imagePatterns = [
-      /<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["']/gi,
-      /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::secure_url)?["']/gi,
-      /<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/gi,
-      /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image(?::src)?["']/gi,
-    ];
-
-    const images: string[] = [];
-    const seen = new Set<string>();
+    if (!contentType.includes("text/html")) return { ok: false, url: finalUrl, reason: "not_html", contentType };
+    const html = (await response.text()).slice(0, 850_000);
+    const title = getMeta(html, [/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i,/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i,/<title[^>]*>([^<]+)<\/title>/i]);
+    const description = getMeta(html, [/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i,/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i,/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i]);
+    const imagePatterns = [/<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["']/gi,/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::secure_url)?["']/gi,/<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']/gi,/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image(?::src)?["']/gi,/<img[^>]+src=["']([^"']+)["'][^>]*>/gi];
+    const images: string[] = []; const seen = new Set<string>();
     for (const pattern of imagePatterns) {
       for (const match of html.matchAll(pattern)) {
-        const absolute = match[1] ? absoluteUrl(match[1].replace(/&amp;/g, "&"), finalUrl) : null;
-        if (absolute?.startsWith("http") && !seen.has(absolute)) {
-          seen.add(absolute);
-          images.push(absolute);
-          if (images.length >= 8) break;
-        }
+        const abs = match[1] ? absoluteUrl(match[1].replace(/&amp;/g, "&"), finalUrl) : null;
+        if (abs?.startsWith("http") && !seen.has(abs)) { seen.add(abs); images.push(abs); if (images.length >= 12) break; }
       }
-      if (images.length >= 8) break;
+      if (images.length >= 12) break;
     }
-
-    const jsonLd = Array.from(html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi))
-      .slice(0, 3)
-      .map((match) => match[1].replace(/\s+/g, " ").trim().slice(0, 6000));
-
-    return {
-      ok: true,
-      url: finalUrl,
-      title,
-      description,
-      images,
-      structuredData: jsonLd,
-    };
-  } catch (error) {
-    return { ok: false, url, error: error instanceof Error ? error.message : "fetch_failed" };
-  }
+    const jsonLd = Array.from(html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)).slice(0, 4).map((m) => m[1].replace(/\s+/g, " ").trim().slice(0, 8000));
+    return { ok: true, url: finalUrl, title, description, images, structuredData: jsonLd };
+  } catch (error) { return { ok: false, url, error: error instanceof Error ? error.message : "fetch_failed" }; }
 }
 
 export async function reverseGeocode(latitude: number, longitude: number): Promise<AgentToolResult> {
   try {
     const endpoint = new URL("https://nominatim.openstreetmap.org/reverse");
-    endpoint.searchParams.set("format", "jsonv2");
-    endpoint.searchParams.set("lat", String(latitude));
-    endpoint.searchParams.set("lon", String(longitude));
-    endpoint.searchParams.set("zoom", "18");
-    endpoint.searchParams.set("addressdetails", "1");
-
-    const response = await fetch(endpoint, {
-      headers: {
-        "User-Agent": "Kipu/0.1 (personal memory app)",
-        "Accept-Language": "de,en;q=0.8",
-      },
-      signal: AbortSignal.timeout(5000),
-    });
+    endpoint.searchParams.set("format", "jsonv2"); endpoint.searchParams.set("lat", String(latitude)); endpoint.searchParams.set("lon", String(longitude)); endpoint.searchParams.set("zoom", "18"); endpoint.searchParams.set("addressdetails", "1");
+    const response = await fetch(endpoint, { headers: { "User-Agent": "Kipu/0.2 personal-memory-app", "Accept-Language": "de,en;q=0.8" }, signal: AbortSignal.timeout(5000) });
     if (!response.ok) return { ok: false, status: response.status };
     const data = await response.json();
-    return {
-      ok: true,
-      displayName: data.display_name ?? null,
-      address: data.address ?? null,
-      latitude,
-      longitude,
-    };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "reverse_geocode_failed" };
+    return { ok: true, displayName: data.display_name ?? null, address: data.address ?? null, type: data.type ?? null, category: data.category ?? null, latitude, longitude };
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "reverse_geocode_failed" }; }
+}
+
+export async function searchPlaces(query: string, latitude?: number, longitude?: number): Promise<AgentToolResult> {
+  try {
+    const endpoint = new URL("https://nominatim.openstreetmap.org/search");
+    endpoint.searchParams.set("format", "jsonv2"); endpoint.searchParams.set("q", query); endpoint.searchParams.set("addressdetails", "1"); endpoint.searchParams.set("limit", "8"); endpoint.searchParams.set("namedetails", "1"); endpoint.searchParams.set("extratags", "1");
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      const span = 0.35; endpoint.searchParams.set("viewbox", `${Number(longitude)-span},${Number(latitude)+span},${Number(longitude)+span},${Number(latitude)-span}`); endpoint.searchParams.set("bounded", "0");
+    }
+    const response = await fetch(endpoint, { headers: { "User-Agent": "Kipu/0.2 personal-memory-app", "Accept-Language": "de,en;q=0.8" }, signal: AbortSignal.timeout(5500) });
+    if (!response.ok) return { ok: false, status: response.status };
+    const rows = await response.json();
+    return { ok: true, results: rows.map((r: any) => ({ name: r.namedetails?.name ?? r.name ?? r.display_name?.split(",")[0] ?? null, displayName: r.display_name, latitude: Number(r.lat), longitude: Number(r.lon), type: r.type, category: r.category, address: r.address, website: r.extratags?.website ?? r.extratags?.contact\:website ?? null, phone: r.extratags?.phone ?? r.extratags?.contact\:phone ?? null, openingHours: r.extratags?.opening_hours ?? null })).slice(0,8) };
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "place_search_failed" }; }
+}
+
+async function callSearch(openAiKey: string, query: string) {
+  const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${openAiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5.6-luna", tools: [{ type: "web_search" }], include: ["web_search_call.action.sources"], input: `Find highly relevant public webpages for this visual subject. Prefer official/entity pages and reputable pages likely to contain a representative image. Subject: ${query}` }) });
+  if (!response.ok) return [] as Array<{title?:string;url:string}>;
+  const payload = await response.json(); const sources: Array<{title?:string;url:string}> = []; const seen = new Set<string>();
+  for (const o of payload.output ?? []) if (o.type === "web_search_call") for (const s of o.action?.sources ?? []) if (s?.url && !seen.has(s.url)) { seen.add(s.url); sources.push({ title: s.title, url: s.url }); }
+  return sources.slice(0, 8);
+}
+
+export async function searchImages(query: string, context: AgentToolContext): Promise<AgentToolResult> {
+  if (!context.openAiKey) return { ok: false, error: "missing_openai_key" };
+  const pages = await callSearch(context.openAiKey, query);
+  const inspected = await Promise.all(pages.slice(0,6).map(async (p) => ({ source: p, page: await inspectWebPage(p.url) })));
+  const candidates: Array<{ url:string; sourceUrl:string; sourceTitle?:string }> = []; const seen = new Set<string>();
+  for (const item of inspected) {
+    const imgs = Array.isArray(item.page.images) ? item.page.images as string[] : [];
+    for (const image of imgs) if (!seen.has(image)) { seen.add(image); candidates.push({ url: image, sourceUrl: item.source.url, sourceTitle: item.source.title }); if (candidates.length >= 20) break; }
+    if (candidates.length >= 20) break;
   }
+  return { ok: true, query, pages, candidates };
+}
+
+export async function searchMyIdeas(query: string, context: AgentToolContext): Promise<AgentToolResult> {
+  if (!context.supabase || !context.userId) return { ok: false, error: "missing_memory_context" };
+  const q = query.trim(); if (!q) return { ok: true, results: [] };
+  const safe = q.replace(/[,%()]/g, " ").trim();
+  const { data, error } = await context.supabase.from("ideas").select("id,title,summary,original_input,tags,location_label,created_at,enrichment").eq("user_id", context.userId).or(`title.ilike.%${safe}%,summary.ilike.%${safe}%,original_input.ilike.%${safe}%`).order("created_at", { ascending: false }).limit(10);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, results: data ?? [] };
+}
+
+export async function findSimilarIdeas(text: string, context: AgentToolContext): Promise<AgentToolResult> {
+  if (!context.supabase || !context.userId) return { ok: false, error: "missing_memory_context" };
+  const { data, error } = await context.supabase.from("ideas").select("id,title,summary,original_input,tags,location_label,created_at").eq("user_id", context.userId).order("created_at", { ascending: false }).limit(60);
+  if (error) return { ok: false, error: error.message };
+  const words = new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2));
+  const scored = (data ?? []).map((idea: any) => { const hay = `${idea.title} ${idea.summary ?? ""} ${idea.original_input ?? ""} ${(idea.tags ?? []).join(" ")}`.toLowerCase(); let score = 0; for (const w of words) if (hay.includes(w)) score++; return { ...idea, similarity_hint: words.size ? score / words.size : 0 }; }).filter((x: any) => x.similarity_hint > 0).sort((a: any,b: any)=>b.similarity_hint-a.similarity_hint).slice(0,8);
+  return { ok: true, results: scored };
 }
 
 export const kipuFunctionTools = [
-  {
-    type: "function",
-    name: "inspect_web_page",
-    description: "Inspect a specific public webpage that is relevant to the remembered subject. Returns title, description, structured data and representative image candidates from the page. Use this after web search when a concrete page may provide better factual or visual evidence.",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: { url: { type: "string" } },
-      required: ["url"],
-    },
-  },
-  {
-    type: "function",
-    name: "reverse_geocode",
-    description: "Resolve capture GPS coordinates into a human-readable place. Use only when knowing where the user captured the memory is useful. Capture location is not automatically the subject location.",
-    strict: true,
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        latitude: { type: "number" },
-        longitude: { type: "number" },
-      },
-      required: ["latitude", "longitude"],
-    },
-  },
+  { type:"function", name:"inspect_web_page", description:"Inspect a specific public webpage. Returns title, description, structured data and image candidates. Use when a concrete page can provide better evidence.", strict:true, parameters:{ type:"object", additionalProperties:false, properties:{ url:{type:"string"} }, required:["url"] } },
+  { type:"function", name:"search_images", description:"Search generically for representative image candidates for any remembered subject. Returns image URLs together with source pages. Use when a visual would make the memory easier to recognize. No category assumptions are built into the tool.", strict:true, parameters:{ type:"object", additionalProperties:false, properties:{ query:{type:"string"} }, required:["query"] } },
+  { type:"function", name:"search_places", description:"Search public place/POI data by natural-language query, optionally biased near coordinates. Useful for named venues, restaurants, shops, landmarks and other physical places.", strict:true, parameters:{ type:"object", additionalProperties:false, properties:{ query:{type:"string"}, latitude:{anyOf:[{type:"number"},{type:"null"}]}, longitude:{anyOf:[{type:"number"},{type:"null"}]} }, required:["query","latitude","longitude"] } },
+  { type:"function", name:"reverse_geocode", description:"Resolve GPS coordinates into a human-readable place. Capture location is not automatically subject location.", strict:true, parameters:{ type:"object", additionalProperties:false, properties:{ latitude:{type:"number"}, longitude:{type:"number"} }, required:["latitude","longitude"] } },
+  { type:"function", name:"search_my_ideas", description:"Search the user's existing Kipu memories. Use when prior saved context could help understand a reference or when the user appears to refer to something saved before.", strict:true, parameters:{ type:"object", additionalProperties:false, properties:{ query:{type:"string"} }, required:["query"] } },
+  { type:"function", name:"find_similar_ideas", description:"Find potentially overlapping or duplicate existing memories for the current input. Use when duplicate detection or connection to prior memories would be useful.", strict:true, parameters:{ type:"object", additionalProperties:false, properties:{ text:{type:"string"} }, required:["text"] } },
 ] as const;
 
-export async function runKipuFunctionTool(name: string, args: Record<string, unknown>) {
-  if (name === "inspect_web_page") {
-    return inspectWebPage(String(args.url ?? ""));
-  }
-  if (name === "reverse_geocode") {
-    return reverseGeocode(Number(args.latitude), Number(args.longitude));
-  }
+export async function runKipuFunctionTool(name: string, args: Record<string, unknown>, context: AgentToolContext = {}) {
+  if (name === "inspect_web_page") return inspectWebPage(String(args.url ?? ""));
+  if (name === "search_images") return searchImages(String(args.query ?? ""), context);
+  if (name === "search_places") return searchPlaces(String(args.query ?? ""), args.latitude == null ? undefined : Number(args.latitude), args.longitude == null ? undefined : Number(args.longitude));
+  if (name === "reverse_geocode") return reverseGeocode(Number(args.latitude), Number(args.longitude));
+  if (name === "search_my_ideas") return searchMyIdeas(String(args.query ?? ""), context);
+  if (name === "find_similar_ideas") return findSimilarIdeas(String(args.text ?? ""), context);
   return { ok: false, error: `unknown_tool:${name}` };
 }
