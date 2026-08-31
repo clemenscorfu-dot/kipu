@@ -14,7 +14,7 @@ import Link from "next/link";
 const actions = [
   { label: "Sprechen", icon: Mic, href: "/voice", color: "text-[#6f78f6]" },
   { label: "Schreiben", icon: Pencil, href: "/write", color: "text-[#f2a23b]" },
-  { label: "Kamera", icon: Camera, href: "/processing", color: "text-[#42b86a]" },
+  { label: "Kamera", icon: Camera, href: "/camera", color: "text-[#42b86a]" },
   { label: "Datei", icon: Paperclip, href: "/processing", color: "text-[#9a78df]" },
 ];
 
