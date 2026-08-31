@@ -41,13 +41,46 @@ export async function searchMyIdeas(query:string,context:AgentToolContext):Promi
 
 export async function findSimilarIdeas(text:string,context:AgentToolContext):Promise<AgentToolResult>{if(!context.supabase||!context.userId)return{ok:false,error:"missing_memory_context"};const{data,error}=await context.supabase.from("ideas").select("id,title,summary,original_input,tags,location_label,created_at").eq("user_id",context.userId).order("created_at",{ascending:false}).limit(60);if(error)return{ok:false,error:error.message};const words=new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w)=>w.length>2));const scored=(data??[]).map((idea:any)=>{const hay=`${idea.title} ${idea.summary??""} ${idea.original_input??""} ${(idea.tags??[]).join(" ")}`.toLowerCase();let score=0;for(const w of words)if(hay.includes(w))score++;return{...idea,similarity_hint:words.size?score/words.size:0}}).filter((x:any)=>x.similarity_hint>0).sort((a:any,b:any)=>b.similarity_hint-a.similarity_hint).slice(0,8);return{ok:true,results:scored}}
 
+export async function getCategories(context:AgentToolContext):Promise<AgentToolResult>{
+  if(!context.supabase||!context.userId)return{ok:false,error:"missing_memory_context"};
+  const {data:categories,error}=await context.supabase.from("categories").select("id,parent_id,name,description,sort_order,created_at").eq("user_id",context.userId).order("sort_order").order("name");
+  if(error)return{ok:false,error:error.message};
+  const {data:assignments,error:assignmentError}=await context.supabase.from("idea_categories").select("category_id");
+  if(assignmentError)return{ok:false,error:assignmentError.message};
+  const counts=new Map<string,number>();for(const row of assignments??[])counts.set(row.category_id,(counts.get(row.category_id)??0)+1);
+  const rows=(categories??[]).map((c:any)=>({...c,idea_count:counts.get(c.id)??0}));
+  const mains=rows.filter((c:any)=>!c.parent_id).map((c:any)=>({...c,children:rows.filter((x:any)=>x.parent_id===c.id)}));
+  return{ok:true,total:rows.length,main_count:mains.length,categories:mains};
+}
+
+export async function manageCategories(action:string,args:Record<string,unknown>,context:AgentToolContext):Promise<AgentToolResult>{
+  if(!context.supabase||!context.userId)return{ok:false,error:"missing_memory_context"};const supabase=context.supabase,userId=context.userId;
+  if(action==="create"){
+    const name=String(args.name??"").trim();if(!name)return{ok:false,error:"name_required"};
+    const parentId=args.parent_id?String(args.parent_id):null;
+    if(parentId){const{data:parent,error}=await supabase.from("categories").select("id,parent_id").eq("id",parentId).eq("user_id",userId).single();if(error||!parent)return{ok:false,error:"invalid_parent"};if(parent.parent_id)return{ok:false,error:"max_depth_two"};}
+    const{data,error}=await supabase.from("categories").insert({user_id:userId,parent_id:parentId,name,description:args.description?String(args.description):null}).select("id,parent_id,name,description").single();
+    if(error)return{ok:false,error:error.message};return{ok:true,category:data};
+  }
+  if(action==="update"){
+    const categoryId=String(args.category_id??"");if(!categoryId)return{ok:false,error:"category_id_required"};const patch:Record<string,unknown>={};if(args.name!=null)patch.name=String(args.name).trim();if(args.description!==undefined)patch.description=args.description?String(args.description):null;if(args.parent_id!==undefined)patch.parent_id=args.parent_id?String(args.parent_id):null;
+    const{data,error}=await supabase.from("categories").update(patch).eq("id",categoryId).eq("user_id",userId).select("id,parent_id,name,description").single();if(error)return{ok:false,error:error.message};return{ok:true,category:data};
+  }
+  if(action==="delete"){
+    const categoryId=String(args.category_id??"");if(!categoryId)return{ok:false,error:"category_id_required"};const{error}=await supabase.from("categories").delete().eq("id",categoryId).eq("user_id",userId);if(error)return{ok:false,error:error.message};return{ok:true,deleted:categoryId};
+  }
+  return{ok:false,error:"unsupported_action"};
+}
+
 export const kipuFunctionTools=[
 {type:"function",name:"inspect_web_page",description:"Inspect a specific public webpage and return metadata, structured data and image candidates.",strict:true,parameters:{type:"object",additionalProperties:false,properties:{url:{type:"string"}},required:["url"]}},
 {type:"function",name:"search_images",description:"Search generically for representative image candidates for any remembered subject. Returns image URLs with source pages. Use when a visual would improve recognition.",strict:true,parameters:{type:"object",additionalProperties:false,properties:{query:{type:"string"}},required:["query"]}},
 {type:"function",name:"search_places",description:"Search public place/POI data by natural-language query, optionally biased near coordinates. Useful for any physical place or venue.",strict:true,parameters:{type:"object",additionalProperties:false,properties:{query:{type:"string"},latitude:{anyOf:[{type:"number"},{type:"null"}]},longitude:{anyOf:[{type:"number"},{type:"null"}]}},required:["query","latitude","longitude"]}},
 {type:"function",name:"reverse_geocode",description:"Resolve GPS coordinates into a human-readable place. Capture location is not automatically subject location.",strict:true,parameters:{type:"object",additionalProperties:false,properties:{latitude:{type:"number"},longitude:{type:"number"}},required:["latitude","longitude"]}},
 {type:"function",name:"search_my_ideas",description:"Search the user's existing Kipu memories when prior saved context could help interpret a reference.",strict:true,parameters:{type:"object",additionalProperties:false,properties:{query:{type:"string"}},required:["query"]}},
-{type:"function",name:"find_similar_ideas",description:"Find potentially overlapping or duplicate existing memories for the current input.",strict:true,parameters:{type:"object",additionalProperties:false,properties:{text:{type:"string"}},required:["text"]}}
+{type:"function",name:"find_similar_ideas",description:"Find potentially overlapping or duplicate existing memories for the current input.",strict:true,parameters:{type:"object",additionalProperties:false,properties:{text:{type:"string"}},required:["text"]}},
+{type:"function",name:"get_categories",description:"Read the user's current self-organized category tree including idea counts. Always inspect this before deciding a category.",strict:true,parameters:{type:"object",additionalProperties:false,properties:{},required:[]}},
+{type:"function",name:"manage_categories",description:"Create or maintain the user's category taxonomy. During normal capture, prefer existing categories and only create when clearly useful; do not reorganize or delete categories during capture.",strict:true,parameters:{type:"object",additionalProperties:false,properties:{action:{type:"string",enum:["create","update","delete"]},category_id:{anyOf:[{type:"string"},{type:"null"}]},parent_id:{anyOf:[{type:"string"},{type:"null"}]},name:{anyOf:[{type:"string"},{type:"null"}]},description:{anyOf:[{type:"string"},{type:"null"}]}},required:["action","category_id","parent_id","name","description"]}}
 ] as const;
 
-export async function runKipuFunctionTool(name:string,args:Record<string,unknown>,context:AgentToolContext={}){if(name==="inspect_web_page")return inspectWebPage(String(args.url??""));if(name==="search_images")return searchImages(String(args.query??""),context);if(name==="search_places")return searchPlaces(String(args.query??""),args.latitude==null?undefined:Number(args.latitude),args.longitude==null?undefined:Number(args.longitude));if(name==="reverse_geocode")return reverseGeocode(Number(args.latitude),Number(args.longitude));if(name==="search_my_ideas")return searchMyIdeas(String(args.query??""),context);if(name==="find_similar_ideas")return findSimilarIdeas(String(args.text??""),context);return{ok:false,error:`unknown_tool:${name}`}}
+export async function runKipuFunctionTool(name:string,args:Record<string,unknown>,context:AgentToolContext={}){if(name==="inspect_web_page")return inspectWebPage(String(args.url??""));if(name==="search_images")return searchImages(String(args.query??""),context);if(name==="search_places")return searchPlaces(String(args.query??""),args.latitude==null?undefined:Number(args.latitude),args.longitude==null?undefined:Number(args.longitude));if(name==="reverse_geocode")return reverseGeocode(Number(args.latitude),Number(args.longitude));if(name==="search_my_ideas")return searchMyIdeas(String(args.query??""),context);if(name==="find_similar_ideas")return findSimilarIdeas(String(args.text??""),context);if(name==="get_categories")return getCategories(context);if(name==="manage_categories")return manageCategories(String(args.action??""),args,context);return{ok:false,error:`unknown_tool:${name}`}}
