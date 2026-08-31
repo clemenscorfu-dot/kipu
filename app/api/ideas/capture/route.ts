@@ -1,54 +1,91 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { kipuFunctionTools, runKipuFunctionTool } from "@/lib/kipu-agent-tools";
+import { start } from "workflow/api";
+import { enrichIdeaWorkflow } from "@/workflows/enrich-idea";
 
-const factSchema={type:"object",additionalProperties:false,properties:{label:{type:"string"},value:{type:"string"}},required:["label","value"]};
-const linkSchema={type:"object",additionalProperties:false,properties:{label:{type:"string"},url:{type:"string"}},required:["label","url"]};
-const memorySchema={type:"object",additionalProperties:false,properties:{title:{type:"string"},summary:{type:"string"},tags:{type:"array",items:{type:"string"},maxItems:3},people:{type:"array",items:{type:"string"},maxItems:8},category:{type:"string"},assigned_category_id:{anyOf:[{type:"string"},{type:"null"}]},subject_location:{anyOf:[{type:"string"},{type:"null"}]},subject_latitude:{anyOf:[{type:"number"},{type:"null"}]},subject_longitude:{anyOf:[{type:"number"},{type:"null"}]},subject_location_is_from_user:{type:"boolean"},facts:{type:"array",items:factSchema,maxItems:5},useful_links:{type:"array",items:linkSchema,maxItems:3},representative_image_url:{anyOf:[{type:"string"},{type:"null"}]},use_input_image:{type:"boolean"},representative_image_fit:{type:"string",enum:["cover","contain"]},image_reason:{type:"string"},related_idea_ids:{type:"array",items:{type:"string"},maxItems:5}},required:["title","summary","tags","people","category","assigned_category_id","subject_location","subject_latitude","subject_longitude","subject_location_is_from_user","facts","useful_links","representative_image_url","use_input_image","representative_image_fit","image_reason","related_idea_ids"]};
-type CaptureBody={text?:string;latitude?:number|null;longitude?:number|null;inputType?:"text"|"voice"|"camera";imageDataUrl?:string|null};type Source={title?:string;url:string};type AgentResponse={id?:string;output_text?:string;output?:Array<Record<string,any>>};
-function extractResponseText(payload:AgentResponse){if(typeof payload.output_text==="string"&&payload.output_text.trim())return payload.output_text;for(const output of payload.output??[])for(const content of output.content??[])if(typeof content?.text==="string"&&content.text.trim())return content.text;return null}
-function extractSources(payload:AgentResponse){const sources:Source[]=[];for(const output of payload.output??[]){if(output.type!=="web_search_call")continue;for(const source of output.action?.sources??[])if(source?.url)sources.push({title:source.title,url:source.url})}return sources}
-function cleanGeneratedText(value:string){return value.replace(/\[([^\]]+)\]\(https?:\/\/[^)]+\)/g,"$1").replace(/\((?:https?:\/\/[^)]+)\)/g,"").replace(/https?:\/\/\S+/g,"").replace(/\s{2,}/g," ").trim()}
-function userLinksCaptureToSubject(text:string){const value=text.toLocaleLowerCase("de-CH").replace(/\s+/g," ").trim();if(!value)return false;return /\b(hier|genau hier|an diesem ort|an dieser stelle|diese stelle|dieser ort|da wo ich bin|dort wo ich bin|mein aktueller standort)\b/i.test(value)||/\b(dies(?:e|er|es)\s+[^.!?]{0,35}\s+hier)\b/i.test(value)}
-async function callOpenAI(openAiKey:string,body:Record<string,unknown>){const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${openAiKey}`,"Content-Type":"application/json"},body:JSON.stringify(body)});if(!response.ok){const detail=await response.text();console.error("Kipu agent OpenAI error",response.status,detail);throw new Error(`openai_${response.status}`)}return(await response.json()) as AgentResponse}
-async function validateImage(url:string|null){if(!url)return null;try{const response=await fetch(url,{method:"GET",redirect:"follow",headers:{"User-Agent":"Mozilla/5.0 KipuBot/0.5","Accept":"image/*"},signal:AbortSignal.timeout(5000)});const type=response.headers.get("content-type")||"";if(!response.ok||!type.startsWith("image/"))return null;return response.url||url}catch{return null}}
+type CaptureBody={
+  text?:string;
+  latitude?:number|null;
+  longitude?:number|null;
+  inputType?:"text"|"voice"|"camera";
+  imageDataUrl?:string|null;
+};
 
-async function runAgent(openAiKey:string,supabase:SupabaseClient,userId:string,text:string,imageDataUrl:string|null,latitude?:number|null,longitude?:number|null){
- const tools=[{type:"web_search"},...kipuFunctionTools];const allSources:Source[]=[];const hasCoords=Number.isFinite(latitude)&&Number.isFinite(longitude);const hasImage=Boolean(imageDataUrl?.startsWith("data:image/"));
- const system=`Du bist Kipu, ein persönlicher Memory-Agent. Aus knappem Text, Sprache oder einem Foto machst du eine später wirklich nützliche Erinnerung. Entscheide eigenständig, welche Tools du brauchst; keine Kategorie-Regelbäume.
-
-Toolbox: Web Search, search_images, inspect_web_page, search_places, reverse_geocode, search_my_ideas, find_similar_ideas, get_categories, manage_categories.
-
-Selbstorganisierende Kategorien:
-- Rufe bei JEDEM Capture get_categories auf, bevor du assigned_category_id festlegst.
-- Kategorien sind eine grobe, stabile Navigation; Tags sind die feinen Details. Marken, einzelne Produkte, Personen oder sehr spezielle Themen gehören normalerweise in Tags, nicht als eigene Kategorie.
-- Zielbild über längere Nutzung: ungefähr 5–12 Hauptkategorien, maximal 2 Ebenen. Das ist ein Komplexitätsbudget, kein starres Inhaltsregelwerk.
-- Bevorzuge immer eine bestehende semantisch passende Kategorie.
-- Erstelle eine neue Hauptkategorie nur, wenn keine bestehende sinnvoll passt und der Bereich voraussichtlich wiederverwendbar ist.
-- Erstelle Unterkategorien zurückhaltend: typischerweise erst, wenn der Elternbereich bereits mehrere passende Erinnerungen enthält (grob ab 4–5) und die Unterteilung praktisch nützt.
-- Beim normalen Capture darfst du manage_categories nur mit action=create verwenden. Kein Umbenennen, Verschieben oder Löschen; solche Reorganisation übernimmt später der Taxonomy Curator.
-- assigned_category_id muss die ID einer real existierenden Kategorie sein, die du aus get_categories oder manage_categories erhalten hast. Wenn eine Kategorisierung wirklich noch keinen Sinn ergibt, null.
-
-Qualitätsziel:
-- Verstehe Bildinhalt direkt mit Vision. Das Nutzerfoto ist Originalevidenz und darf das Hauptbild sein.
-- Bei öffentlich identifizierbaren Entitäten recherchiere proaktiv, aber liefere eine kompakte Erinnerung statt eines Rechercheberichts.
-- Wenn die Erinnerung später zu einer Handlung führen könnte (ansehen, kaufen, besuchen, buchen, lesen usw.), sind ein wirklich nützlicher Aktionslink und — falls aktuell verifizierbar — Preis, Verfügbarkeit, Öffnungszeiten oder Bewertung besonders wertvoll. Nichts davon erfinden.
-- useful_links: höchstens 3 wirklich nützliche Links. Bevorzuge die offizielle oder direkt handlungsrelevante Seite. Keine Sammlung nahezu identischer Such-/Quelllinks.
-- Für verifizierte Subject-Koordinaten darfst du einen Google-Maps-Link https://www.google.com/maps/search/?api=1&query=LAT,LON erzeugen.
-- facts höchstens 5, nur erinnerungs- oder handlungsrelevante Fakten. Keine URLs/Quellenmarkup in summary oder facts.
-- Maximal 3 gute Tags.
-- Capture Location != Subject Location. Der Aufnahmeort ist nur Kontext. Du darfst subject_location_is_from_user vorschlagen, aber die Anwendung prüft diese Behauptung selbst gegen den tatsächlichen Nutzereingabetext.
-- Ein recherchierter subject_location braucht echte Subject-Evidenz, idealerweise eigene Subject-Koordinaten aus search_places.
-- Wenn der Nutzer ausdrücklich „hier“, „diese Stelle“, „an diesem Ort“ o.ä. sagt, kann der Aufnahmeort zugleich Subject sein.
-- Finale Antwort ausschließlich im Schema.`;
- const userText=text.trim()||"Der Nutzer möchte sich dieses Foto merken.";const contextText=hasCoords?`Nutzereingabe:\n${userText}\n\nAufnahmekontext GPS ${latitude}, ${longitude}; nicht automatisch Subject Location.`:`Nutzereingabe:\n${userText}\n\nKein GPS-Aufnahmekontext.`;const content:any[]=[{type:"input_text",text:contextText}];if(hasImage)content.push({type:"input_image",image_url:imageDataUrl,detail:"high"});
- let response=await callOpenAI(openAiKey,{model:"gpt-5.6-luna",tools,include:["web_search_call.action.sources"],input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content}],text:{format:{type:"json_schema",name:"kipu_memory",strict:true,schema:memorySchema}}});
- for(let step=0;step<12;step++){allSources.push(...extractSources(response));const calls=(response.output??[]).filter((item)=>item.type==="function_call");if(!calls.length)break;const outputs=[];for(const call of calls){let args:Record<string,unknown>={};try{args=JSON.parse(call.arguments??"{}")}catch{}const result=await runKipuFunctionTool(call.name,args,{supabase,userId,openAiKey});outputs.push({type:"function_call_output",call_id:call.call_id,output:JSON.stringify(result)})}response=await callOpenAI(openAiKey,{model:"gpt-5.6-luna",previous_response_id:response.id,tools,include:["web_search_call.action.sources"],input:outputs,text:{format:{type:"json_schema",name:"kipu_memory",strict:true,schema:memorySchema}}});}
- allSources.push(...extractSources(response));const raw=extractResponseText(response);if(!raw)throw new Error("agent_no_final_output");const memory=JSON.parse(raw) as any;memory.summary=cleanGeneratedText(memory.summary);memory.facts=(memory.facts??[]).map((f:any)=>({label:cleanGeneratedText(f.label),value:cleanGeneratedText(f.value)}));memory.useful_links=(memory.useful_links??[]).filter((l:any)=>{try{return Boolean(l.label)&&new URL(l.url).protocol.startsWith("http")}catch{return false}});
- const explicitCaptureSubject=hasCoords&&userLinksCaptureToSubject(text);memory.subject_location_is_from_user=Boolean(explicitCaptureSubject);const hasSubjectCoords=Number.isFinite(memory.subject_latitude)&&Number.isFinite(memory.subject_longitude);if(memory.subject_location&&!explicitCaptureSubject&&!hasSubjectCoords){memory.subject_location=null;memory.subject_latitude=null;memory.subject_longitude=null;memory.useful_links=memory.useful_links.filter((l:any)=>!String(l.url).includes("google.com/maps"));}
- memory.representative_image_url=await validateImage(memory.representative_image_url??null);if(!hasImage)memory.use_input_image=false;
- if(memory.assigned_category_id){const{data}=await supabase.from("categories").select("id").eq("id",memory.assigned_category_id).eq("user_id",userId).maybeSingle();if(!data)memory.assigned_category_id=null;}
- const uniqueSources:Source[]=[];const seen=new Set<string>();for(const source of allSources){if(!source.url||seen.has(source.url))continue;seen.add(source.url);uniqueSources.push(source)}return{memory,sources:uniqueSources.slice(0,8)};
+function rawTitle(text:string,inputType:string){
+  const trimmed=text.trim();
+  if(trimmed)return trimmed.length>72?`${trimmed.slice(0,69)}…`:trimmed;
+  if(inputType==="camera")return "Fotoaufnahme";
+  if(inputType==="voice")return "Spracheingabe";
+  return "Neue Idee";
 }
 
-export async function POST(request:Request){try{const body=(await request.json()) as CaptureBody;const text=body.text?.trim()??"";const imageDataUrl=body.imageDataUrl?.trim()||null;const inputType=body.inputType??(imageDataUrl?"camera":"text");if(!text&&!imageDataUrl)return NextResponse.json({error:"Eingabe fehlt."},{status:400});if(text.length>5000)return NextResponse.json({error:"Text ist zu lang."},{status:400});if(imageDataUrl&&imageDataUrl.length>3_000_000)return NextResponse.json({error:"Foto ist zu gross."},{status:400});const token=request.headers.get("authorization")?.replace(/^Bearer /,"");if(!token)return NextResponse.json({error:"Nicht angemeldet."},{status:401});const supabaseUrl=process.env.NEXT_PUBLIC_SUPABASE_URL,supabaseKey=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,openAiKey=process.env.OPENAI_API_KEY;if(!supabaseUrl||!supabaseKey||!openAiKey)return NextResponse.json({error:"Server-Konfiguration unvollständig."},{status:500});const supabase=createClient(supabaseUrl,supabaseKey,{global:{headers:{Authorization:`Bearer ${token}`}},auth:{persistSession:false,autoRefreshToken:false}});const{data:userData,error:userError}=await supabase.auth.getUser(token);if(userError||!userData.user)return NextResponse.json({error:"Session ungültig."},{status:401});const{memory,sources}=await runAgent(openAiKey,supabase,userData.user.id,text,imageDataUrl,body.latitude,body.longitude);const hasCoords=Number.isFinite(body.latitude)&&Number.isFinite(body.longitude);const heroImage=memory.use_input_image&&imageDataUrl?imageDataUrl:memory.representative_image_url;const originalInput=text||(inputType==="camera"?"Fotoaufnahme":"Spracheingabe");const{data:idea,error:insertError}=await supabase.from("ideas").insert({user_id:userData.user.id,input_type:inputType,original_input:originalInput,title:memory.title,summary:memory.summary,tags:memory.tags,people:memory.people,latitude:hasCoords?body.latitude:null,longitude:hasCoords?body.longitude:null,location_label:memory.subject_location,location_source:memory.subject_location?(memory.subject_location_is_from_user?"extracted":"researched"):hasCoords?"device":null,enrichment:{category:memory.category,facts:memory.facts,sources,useful_links:memory.useful_links,subject_coordinates:memory.subject_latitude!=null&&memory.subject_longitude!=null?{latitude:memory.subject_latitude,longitude:memory.subject_longitude}:null,image_url:heroImage,image_fit:memory.representative_image_fit,image_reason:memory.image_reason,input_image:imageDataUrl,input_image_used:Boolean(memory.use_input_image&&imageDataUrl),related_idea_ids:memory.related_idea_ids,capture_location:hasCoords?{latitude:body.latitude,longitude:body.longitude}:null,agentic:true,toolbox_version:7,model:"gpt-5.6-luna",enriched_at:new Date().toISOString()}}).select("*").single();if(insertError){console.error("Supabase insert failed",insertError);return NextResponse.json({error:"Speichern in Supabase fehlgeschlagen.",detail:insertError.message},{status:500})}if(memory.assigned_category_id){const{error:categoryError}=await supabase.from("idea_categories").insert({idea_id:idea.id,category_id:memory.assigned_category_id});if(categoryError)console.error("Category assignment failed",categoryError)}return NextResponse.json({idea,category_id:memory.assigned_category_id});}catch(error){console.error("Kipu capture agent error",error);return NextResponse.json({error:"KI-Verarbeitung fehlgeschlagen."},{status:502})}}
+export async function POST(request:Request){
+  try{
+    const body=(await request.json()) as CaptureBody;
+    const text=body.text?.trim()??"";
+    const imageDataUrl=body.imageDataUrl?.trim()||null;
+    const inputType=body.inputType??(imageDataUrl?"camera":"text");
+    if(!text&&!imageDataUrl)return NextResponse.json({error:"Eingabe fehlt."},{status:400});
+    if(text.length>5000)return NextResponse.json({error:"Text ist zu lang."},{status:400});
+    if(imageDataUrl&&imageDataUrl.length>3_000_000)return NextResponse.json({error:"Foto ist zu gross."},{status:400});
+
+    const token=request.headers.get("authorization")?.replace(/^Bearer /,"");
+    if(!token)return NextResponse.json({error:"Nicht angemeldet."},{status:401});
+    const supabaseUrl=process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if(!supabaseUrl||!supabaseKey)return NextResponse.json({error:"Server-Konfiguration unvollständig."},{status:500});
+
+    const supabase=createClient(supabaseUrl,supabaseKey,{global:{headers:{Authorization:`Bearer ${token}`}},auth:{persistSession:false,autoRefreshToken:false}});
+    const{data:userData,error:userError}=await supabase.auth.getUser(token);
+    if(userError||!userData.user)return NextResponse.json({error:"Session ungültig."},{status:401});
+
+    const hasCoords=Number.isFinite(body.latitude)&&Number.isFinite(body.longitude);
+    const originalInput=text||(inputType==="camera"?"Fotoaufnahme":"Spracheingabe");
+    const queuedAt=new Date().toISOString();
+    const pendingEnrichment={
+      processing_status:"pending",
+      queued_at:queuedAt,
+      input_image:imageDataUrl,
+      image_url:imageDataUrl,
+      image_fit:"cover",
+      capture_location:hasCoords?{latitude:body.latitude,longitude:body.longitude}:null,
+      agentic:true,
+      toolbox_version:8,
+    };
+
+    const{data:idea,error:insertError}=await supabase.from("ideas").insert({
+      user_id:userData.user.id,
+      input_type:inputType,
+      original_input:originalInput,
+      title:rawTitle(text,inputType),
+      summary:null,
+      tags:[],
+      people:[],
+      latitude:hasCoords?body.latitude:null,
+      longitude:hasCoords?body.longitude:null,
+      location_label:null,
+      location_source:hasCoords?"device":null,
+      enrichment:pendingEnrichment,
+    }).select("*").single();
+
+    if(insertError){
+      console.error("Supabase raw insert failed",insertError);
+      return NextResponse.json({error:"Speichern in Supabase fehlgeschlagen.",detail:insertError.message},{status:500});
+    }
+
+    try{
+      const run=await start(enrichIdeaWorkflow,[{ideaId:idea.id,userId:userData.user.id,accessToken:token}]);
+      const enrichment={...pendingEnrichment,workflow_run_id:run.runId};
+      await supabase.from("ideas").update({enrichment}).eq("id",idea.id).eq("user_id",userData.user.id);
+      return NextResponse.json({idea:{...idea,enrichment},processing_status:"pending",run_id:run.runId},{status:202});
+    }catch(workflowError){
+      console.error("Failed to start enrichment workflow",workflowError);
+      const enrichment={...pendingEnrichment,processing_status:"failed",processing_error:"workflow_start_failed"};
+      await supabase.from("ideas").update({enrichment}).eq("id",idea.id).eq("user_id",userData.user.id);
+      return NextResponse.json({idea:{...idea,enrichment},processing_status:"failed",warning:"Idee gespeichert, Aufbereitung konnte aber nicht gestartet werden."},{status:202});
+    }
+  }catch(error){
+    console.error("Kipu capture error",error);
+    return NextResponse.json({error:"Speichern fehlgeschlagen."},{status:500});
+  }
+}
