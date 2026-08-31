@@ -1,6 +1,6 @@
 "use client";
 
-import { Filter, Home, LoaderCircle, Search, UserRound } from "lucide-react";
+import { Filter, Home, LoaderCircle, Search, Trash2, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ensureAnonymousSession, getSupabaseBrowserClient } from "@/lib/supabase-browser";
@@ -27,6 +27,7 @@ function emojiFor(category?: string) {
 export default function IdeasPage() {
   const [ideas, setIdeas] = useState<IdeaRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,11 +50,35 @@ export default function IdeasPage() {
     return () => { active = false; };
   }, []);
 
+  async function deleteAllIdeas() {
+    if (!ideas.length || deleting) return;
+    if (!window.confirm(`Wirklich alle ${ideas.length} Ideen löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await ensureAnonymousSession();
+      const supabase = getSupabaseBrowserClient();
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData.user) throw new Error("Keine aktive Session.");
+      const { error } = await supabase.from("ideas").delete().eq("user_id", authData.user.id);
+      if (error) throw error;
+      setIdeas([]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ideen konnten nicht gelöscht werden.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col bg-[#fbfaf7] text-black">
       <header className="flex items-center justify-between px-5 pb-3 pt-7">
         <h1 className="text-[22px] font-semibold">Meine Ideen</h1>
-        <div className="flex gap-4"><Filter className="h-5 w-5" /><Link href="/search"><Search className="h-5 w-5" /></Link></div>
+        <div className="flex items-center gap-4">
+          {ideas.length > 0 && <button onClick={deleteAllIdeas} disabled={deleting} aria-label="Alle Ideen löschen" className="text-[#c63f35] disabled:opacity-40">{deleting ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <Trash2 className="h-5 w-5" />}</button>}
+          <Filter className="h-5 w-5" />
+          <Link href="/search"><Search className="h-5 w-5" /></Link>
+        </div>
       </header>
       <div className="flex gap-2 overflow-hidden px-4 pb-4">
         {["Alle","Orte","Essen","Aktivitäten","Sonst."].map((x,i)=><span key={x} className={`whitespace-nowrap rounded-full px-4 py-2 text-[12px] ${i===0?"bg-black text-white":"bg-[#f0efeb]"}`}>{x}</span>)}
