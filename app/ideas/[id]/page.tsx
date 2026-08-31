@@ -1,11 +1,21 @@
 "use client";
 
-import { ArrowLeft, LoaderCircle, Map, MapPin, MoreHorizontal, Pencil, Share2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, LoaderCircle, Map, MapPin, MoreHorizontal, Pencil, Share2 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { mockIdeas } from "@/lib/mock-ideas";
 import { ensureAnonymousSession, getSupabaseBrowserClient } from "@/lib/supabase-browser";
+
+type Enrichment = {
+  category?: string;
+  entity_type?: string | null;
+  entity_name?: string | null;
+  research_used?: boolean;
+  research_summary?: string | null;
+  facts?: Array<{ label: string; value: string }>;
+  sources?: Array<{ title?: string; url: string }>;
+};
 
 type StoredIdea = {
   id: string;
@@ -18,7 +28,7 @@ type StoredIdea = {
   latitude: number | null;
   longitude: number | null;
   location_label: string | null;
-  enrichment: Record<string, unknown>;
+  enrichment: Enrichment;
   created_at: string;
 };
 
@@ -69,9 +79,12 @@ export default function IdeaDetailPage() {
   const location = storedIdea?.location_label ?? mock.location?.label ?? null;
   const latitude = storedIdea?.latitude ?? mock.location?.latitude ?? null;
   const longitude = storedIdea?.longitude ?? mock.location?.longitude ?? null;
+  const enrichment = storedIdea?.enrichment ?? {};
   const createdAt = storedIdea?.created_at ? new Date(storedIdea.created_at).toLocaleString("de-CH", { dateStyle: "short", timeStyle: "short" }) : "30.08.2024, 16:42";
-  const category = storedIdea?.enrichment?.category;
-  const emoji = category === "Essen" || id === "restaurant-tipp" ? "🍽️" : category === "Produkt" || id === "produktfoto" ? "📦" : category === "Idee" ? "💡" : "🔥";
+  const category = enrichment.category;
+  const emoji = category === "Restaurant" || category === "Essen" || id === "restaurant-tipp" ? "🍽️" : category === "Buch" ? "📚" : category === "Produkt" || id === "produktfoto" ? "📦" : category === "Idee" ? "💡" : "🔥";
+  const facts = enrichment.facts ?? [];
+  const sources = enrichment.sources ?? [];
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-[430px] bg-[#fbfaf7] text-black">
@@ -106,6 +119,36 @@ export default function IdeaDetailPage() {
           <p className="mt-2 text-[12px] leading-5">{summary}</p>
           {typeof category === "string" && <p className="mt-2 text-[10px] text-black/40">Kategorie: {category}</p>}
         </div>
+
+        {(enrichment.research_summary || facts.length > 0) && (
+          <div className="mt-3 rounded-[14px] bg-white p-4 shadow-[0_2px_10px_rgba(0,0,0,.05)]">
+            <h2 className="text-[12px] font-semibold">Gefundene Informationen</h2>
+            {enrichment.research_summary && <p className="mt-2 text-[12px] leading-5">{enrichment.research_summary}</p>}
+            {facts.length > 0 && (
+              <dl className="mt-3 divide-y divide-black/5">
+                {facts.map((fact, index) => (
+                  <div key={`${fact.label}-${index}`} className="grid grid-cols-[92px_1fr] gap-3 py-2 text-[11px] leading-4">
+                    <dt className="text-black/45">{fact.label}</dt>
+                    <dd className="font-medium">{fact.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+            {sources.length > 0 && (
+              <div className="mt-3 border-t border-black/5 pt-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-black/35">Quellen</p>
+                <div className="mt-2 space-y-2">
+                  {sources.slice(0, 3).map((source, index) => (
+                    <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer" className="flex items-start gap-2 text-[11px] leading-4 text-[#5d61c9]">
+                      <ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span className="line-clamp-2">{source.title || source.url}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       <nav className="fixed bottom-0 left-1/2 flex w-full max-w-[430px] -translate-x-1/2 items-center gap-3 border-t border-black/5 bg-[#fbfaf7]/95 px-5 py-3 backdrop-blur">
