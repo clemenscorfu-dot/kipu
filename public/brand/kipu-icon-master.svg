@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 207 207" role="img" aria-label="Kipu icon">
+  <rect width="207" height="207" rx="42" fill="#6f9d91"/>
+  <g fill="none" stroke="#fff" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M79 45V156"/>
+    <circle cx="88" cy="108" r="18"/>
+    <path d="M102 97L145 62"/>
+    <path d="M102 119L149 164"/>
+  </g>
+</svg>
