@@ -1,0 +1,1 @@
+The approved Kipu visual reference is the original generated branding image from the design chat. Binary PWA assets are derived from that raster source, not redrawn.
