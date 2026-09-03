@@ -1,1 +1,11 @@
-export function KipuLogo({compact=false,className=""}:{compact?:boolean;className?:string}){return <div className={`inline-flex items-center gap-2 ${className}`} aria-label="Kipu"><svg viewBox="0 0 64 64" className={compact?"h-8 w-8":"h-10 w-10"} role="img" aria-hidden="true"><path d="M18 8v31c0 10 7 17 17 17 9 0 16-6 16-14 0-6-4-10-9-14l-8-6 12-10" fill="none" stroke="#79AA36" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"/><circle cx="30" cy="39" r="3.8" fill="#79AA36"/><path d="M43 8l3-4M51 13l5-1M39 3l-1-5" stroke="#79AA36" strokeWidth="3" strokeLinecap="round"/></svg><span className={`${compact?"text-[22px]":"text-[28px]"} font-semibold tracking-[-0.035em] text-[#79AA36]`}>kipu</span></div>}
+export function KipuLogo({compact=false,className=""}:{compact?:boolean;className?:string}){
+  return (
+    <div className={`inline-flex items-center ${className}`} aria-label="Kipu">
+      <img
+        src="/schriftzug-master.png"
+        alt="Kipu"
+        className={`${compact?"h-8 max-w-[118px]":"h-10 max-w-[148px]"} w-auto object-contain`}
+      />
+    </div>
+  );
+}
