@@ -4,6 +4,7 @@ import { enrichPendingIdea, type EnrichIdeaPayload } from "@/lib/kipu-enrichment
 import { ensureIdeaCategory } from "@/lib/kipu-category-manager";
 import { indexIdeaMemory } from "@/lib/kipu-memory-index";
 import { buildMemoryRelations } from "@/lib/kipu-memory-graph";
+import { ensurePlaceEnrichment } from "@/lib/kipu-place-enrichment";
 
 export const maxDuration=300;
 
@@ -17,6 +18,8 @@ async function backgroundEnrich(payload:EnrichIdeaPayload){
   try{
     const result=await enrichPendingIdea(payload);
     const ideaId=result.ideaId;
+    // A concrete real-world POI should never remain half-enriched: resolve map coordinates, maps link and public place details.
+    try{await ensurePlaceEnrichment(s,payload.userId,openAiKey,ideaId)}catch(e){console.error("Post-enrichment place step failed",e)}
     // Core enrichment must not be invalidated by optional organisation/memory steps.
     try{
       const{data:idea,error}=await s.from("ideas").select("id,title,summary,tags,enrichment").eq("id",ideaId).eq("user_id",payload.userId).single();
