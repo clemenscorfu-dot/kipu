@@ -6,12 +6,8 @@ export const metadata: Metadata = {
   description: "save now. find later.",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: [
-      { url: "/favicon.ico" },
-      { url: "/brand/kipu-mark.svg", type: "image/svg+xml" },
-      { url: "/brand/icon-192.png", sizes: "192x192", type: "image/png" },
-    ],
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    icon: [{ url: "/Kipu-master-logo", type: "image/png" }],
+    apple: [{ url: "/Kipu-master-logo", type: "image/png" }],
   },
 };
 
