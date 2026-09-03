@@ -1,4 +1,135 @@
 "use client";
-import{Camera,ChevronRight,MapPin,Mic,Paperclip,Pencil,Plus,Settings,Sparkles,Images,X}from"lucide-react";import Link from"next/link";import{useEffect,useRef,useState}from"react";import{useRouter}from"next/navigation";import{ensureAnonymousSession,getSupabaseBrowserClient}from"@/lib/supabase-browser";import{KipuLogo}from"@/components/kipu-logo";
-const actions=[{label:"Text",hint:"Gedanke oder Idee notieren",icon:Pencil,href:"/write",tone:"bg-[#fff7e8] text-[#d99a39]"},{label:"Sprache",hint:"Einfach erzählen",icon:Mic,href:"/voice",tone:"bg-[#eeecff] text-[#6f78f6]"},{label:"Foto",hint:"Etwas fotografieren",icon:Camera,href:"/camera",tone:"bg-[#e7f5e9] text-[#42a85d]"},{label:"Datei",hint:"Dokument oder Bild hinzufügen",icon:Paperclip,href:"/processing",tone:"bg-[#f2ecfa] text-[#936bd1]"}];type Rediscover={id:string;title:string;summary:string|null;location_label:string|null;reason:string;enrichment?:{image_url?:string|null;image_fit?:"cover"|"contain"}};
-export default function Home(){const router=useRouter(),cameraRef=useRef<HTMLInputElement|null>(null);const[item,setItem]=useState<Rediscover|null>(null),[captureOpen,setCaptureOpen]=useState(false);useEffect(()=>{let active=true;try{const cached=localStorage.getItem("kipu-rediscover");if(cached)setItem(JSON.parse(cached))}catch{}async function load(){try{await ensureAnonymousSession();const session=(await getSupabaseBrowserClient().auth.getSession()).data.session;if(!session)return;void(async()=>{for(let i=0;i<5;i++){try{const r=await fetch("/api/memory/backfill",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`}});if(!r.ok)break;const d=await r.json();if(!d.remaining)break}catch{break}}for(let i=0;i<6;i++){try{const r=await fetch("/api/memory/graph-backfill",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`}});if(!r.ok)break;const d=await r.json();if(!d.remaining)break}catch{break}}for(let i=0;i<6;i++){try{const r=await fetch("/api/place/backfill",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`}});if(!r.ok)break;const d=await r.json();if(!d.remaining)break}catch{break}}})();const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3500);const r=await fetch("/api/rediscover",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`},signal:controller.signal});clearTimeout(timer);if(!r.ok)return;const d=await r.json();if(active&&d.item){setItem(d.item);try{localStorage.setItem("kipu-rediscover",JSON.stringify(d.item))}catch{}}}catch{}}void load();return()=>{active=false}},[]);useEffect(()=>{document.body.style.overflow=captureOpen?"hidden":"";return()=>{document.body.style.overflow=""}},[captureOpen]);function photoChosen(file?:File){if(!file)return;const reader=new FileReader();reader.onload=()=>{try{sessionStorage.setItem("kipu-camera-capture",String(reader.result??""))}catch{}router.push("/camera?captured=1")};reader.readAsDataURL(file)}return <main className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col overflow-x-hidden bg-[#fbfaf7] text-[#111]"><input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>photoChosen(e.target.files?.[0])}/><div className="flex flex-1 flex-col px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-5"><div className="flex items-center justify-between"><KipuLogo compact/><button aria-label="Einstellungen" className="flex h-10 w-10 items-center justify-center rounded-full border border-[#ecebe7] bg-white shadow-[0_4px_14px_rgba(0,0,0,.045)]"><Settings className="h-[18px] w-[18px]"/></button></div><header className="mt-6"><h1 className="max-w-[330px] text-[29px] font-semibold leading-[1.08] tracking-[-0.035em]">Was möchtest du heute festhalten?</h1><div className="mt-5 flex justify-center"><button onClick={()=>setCaptureOpen(true)} aria-label="Neue Erinnerung festhalten" className="group relative flex h-[82px] w-[82px] items-center justify-center rounded-full bg-[#79aa36] text-white shadow-[0_12px_30px_rgba(121,170,54,.28)] active:scale-95"><span className="absolute inset-[-7px] rounded-full border border-[#79aa36]/15"/><Plus className="h-9 w-9" strokeWidth={1.8}/></button></div><p className="mt-2.5 text-center text-[11px] font-medium text-black/40">Tippen und festhalten</p></header>{item&&<section className="mt-5"><div className="mb-2 flex items-center justify-between"><p className="text-[14px] font-semibold">Kipu erinnert dich</p><Sparkles className="h-4 w-4 text-[#79aa36]"/></div><Link href={`/ideas/${item.id}`} className="kipu-card flex gap-3 p-3"><div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-[14px] bg-[#eef2e9]">{item.enrichment?.image_url?<img src={item.enrichment.image_url} alt="" className={`h-full w-full ${item.enrichment.image_fit==="contain"?"object-contain p-1":"object-cover"}`}/>:<Sparkles className="h-6 w-6 text-[#79aa36]"/>}</div><div className="min-w-0 flex-1"><h2 className="line-clamp-2 text-[13px] font-semibold">{item.title}</h2><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-black/48">{item.reason}</p></div><ChevronRight className="mt-1 h-4 w-4 shrink-0 text-black/30"/></Link></section>}<section className="mt-4"><p className="mb-2 text-[14px] font-semibold">Schnellzugriff</p><div className="kipu-card overflow-hidden"><Link href="/nearby" className="flex h-[56px] items-center border-b border-[#efefec] px-3"><span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[#dff1c9] text-[#79aa36]"><MapPin className="h-4 w-4"/></span><span className="ml-3 flex-1"><span className="block text-[12px] font-semibold">In deiner Nähe</span><span className="text-[9px] text-black/40">Gespeicherte Orte entdecken</span></span><ChevronRight className="h-4 w-4 text-black/30"/></Link><Link href="/ideas" className="flex h-[56px] items-center px-3"><span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[#d8e8ff] text-[#4c8df5]"><Images className="h-4 w-4"/></span><span className="ml-3 flex-1"><span className="block text-[12px] font-semibold">Sammlung</span><span className="text-[9px] text-black/40">Alle Erinnerungen durchsuchen</span></span><ChevronRight className="h-4 w-4 text-black/30"/></Link></div></section></div>{captureOpen&&<div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 backdrop-blur-[2px]" onClick={()=>setCaptureOpen(false)}><section className="w-full max-w-[430px] rounded-t-[30px] bg-[#fbfaf7] px-5 pb-[calc(26px+env(safe-area-inset-bottom))] pt-3 shadow-[0_-18px_50px_rgba(0,0,0,.18)]" onClick={e=>e.stopPropagation()}><div className="mx-auto h-1 w-10 rounded-full bg-black/12"/><div className="mt-4 flex items-start justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-[.12em] text-[#79aa36]">Neue Erinnerung</p><h2 className="mt-1 text-[22px] font-semibold tracking-[-.025em]">Wie möchtest du sie festhalten?</h2></div><button onClick={()=>setCaptureOpen(false)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#efeee9]"><X className="h-4 w-4"/></button></div><div className="mt-5 grid grid-cols-2 gap-3">{actions.map(({label,hint,icon:Icon,href,tone})=>label==="Foto"?<button type="button" key={label} onClick={()=>{setCaptureOpen(false);setTimeout(()=>cameraRef.current?.click(),0)}} className="text-left rounded-[20px] border border-[#ecebe7] bg-white p-4 shadow-[0_6px_18px_rgba(0,0,0,.045)] active:scale-[.985]"><span className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${tone}`}><Icon className="h-5 w-5"/></span><p className="mt-3 text-[14px] font-semibold">{label}</p><p className="mt-1 text-[10px] leading-4 text-black/42">{hint}</p></button>:<Link href={href} key={label} onClick={()=>setCaptureOpen(false)} className="rounded-[20px] border border-[#ecebe7] bg-white p-4 shadow-[0_6px_18px_rgba(0,0,0,.045)] active:scale-[.985]"><span className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${tone}`}><Icon className="h-5 w-5"/></span><p className="mt-3 text-[14px] font-semibold">{label}</p><p className="mt-1 text-[10px] leading-4 text-black/42">{hint}</p></Link>)}</div></section></div>}</main>}
+
+import {Camera,ChevronRight,Images,MapPin,Mic,Paperclip,Pencil,Plus,Settings,Sparkles,X} from "lucide-react";
+import Link from "next/link";
+import {useEffect,useRef,useState} from "react";
+import {useRouter} from "next/navigation";
+import {ensureAnonymousSession,getSupabaseBrowserClient} from "@/lib/supabase-browser";
+import {KipuLogo} from "@/components/kipu-logo";
+
+const brand="#74a18f";
+const actions=[
+  {label:"Text",hint:"Gedanke oder Idee notieren",icon:Pencil,href:"/write",tone:"bg-[#fff7e8] text-[#d99a39]"},
+  {label:"Sprache",hint:"Einfach erzählen",icon:Mic,href:"/voice",tone:"bg-[#eeecff] text-[#6f78f6]"},
+  {label:"Foto",hint:"Etwas fotografieren",icon:Camera,href:"/camera",tone:"bg-[#e8f3ee] text-[#5d9b84]"},
+  {label:"Datei",hint:"Dokument oder Bild hinzufügen",icon:Paperclip,href:"/processing",tone:"bg-[#f2ecfa] text-[#936bd1]"},
+];
+
+type Rediscover={id:string;title:string;summary:string|null;location_label:string|null;reason:string;enrichment?:{image_url?:string|null;image_fit?:"cover"|"contain"}};
+
+export default function Home(){
+  const router=useRouter(),cameraRef=useRef<HTMLInputElement|null>(null);
+  const [item,setItem]=useState<Rediscover|null>(null),[captureOpen,setCaptureOpen]=useState(false);
+
+  useEffect(()=>{
+    let active=true;
+    try{const cached=localStorage.getItem("kipu-rediscover");if(cached)setItem(JSON.parse(cached))}catch{}
+    async function load(){
+      try{
+        await ensureAnonymousSession();
+        const session=(await getSupabaseBrowserClient().auth.getSession()).data.session;
+        if(!session)return;
+        void(async()=>{
+          for(let i=0;i<5;i++){try{const r=await fetch("/api/memory/backfill",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`}});if(!r.ok)break;const d=await r.json();if(!d.remaining)break}catch{break}}
+          for(let i=0;i<6;i++){try{const r=await fetch("/api/memory/graph-backfill",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`}});if(!r.ok)break;const d=await r.json();if(!d.remaining)break}catch{break}}
+          for(let i=0;i<6;i++){try{const r=await fetch("/api/place/backfill",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`}});if(!r.ok)break;const d=await r.json();if(!d.remaining)break}catch{break}}
+        })();
+        const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3500);
+        const r=await fetch("/api/rediscover",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`},signal:controller.signal});
+        clearTimeout(timer);
+        if(!r.ok)return;
+        const d=await r.json();
+        if(active&&d.item){setItem(d.item);try{localStorage.setItem("kipu-rediscover",JSON.stringify(d.item))}catch{}}
+      }catch{}
+    }
+    void load();
+    return()=>{active=false};
+  },[]);
+
+  useEffect(()=>{document.body.style.overflow=captureOpen?"hidden":"";return()=>{document.body.style.overflow=""}},[captureOpen]);
+
+  function photoChosen(file?:File){
+    if(!file)return;
+    const reader=new FileReader();
+    reader.onload=()=>{try{sessionStorage.setItem("kipu-camera-capture",String(reader.result??""))}catch{}router.push("/camera?captured=1")};
+    reader.readAsDataURL(file);
+  }
+
+  return <main className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col overflow-x-hidden bg-[#fbfaf7] text-[#111]">
+    <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>photoChosen(e.target.files?.[0])}/>
+    <div className="flex flex-1 flex-col px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-4">
+      <div className="flex items-start justify-between">
+        <KipuLogo compact/>
+        <button aria-label="Einstellungen" className="flex h-9 w-9 items-center justify-center rounded-full border border-[#ebe9e4] bg-white/90 shadow-[0_3px_12px_rgba(0,0,0,.04)]">
+          <Settings className="h-4 w-4"/>
+        </button>
+      </div>
+
+      <header className="mt-5">
+        <h1 className="max-w-[320px] text-[26px] font-semibold leading-[1.06] tracking-[-0.035em]">Was möchtest du heute festhalten?</h1>
+        <div className="mt-4 flex items-center gap-4 rounded-[24px] border border-[#e8e7e2] bg-white px-4 py-3.5 shadow-[0_8px_26px_rgba(0,0,0,.045)]">
+          <button onClick={()=>setCaptureOpen(true)} aria-label="Neue Erinnerung festhalten" className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-full bg-[#74a18f] text-white shadow-[0_10px_24px_rgba(116,161,143,.24)] active:scale-95">
+            <Plus className="h-8 w-8" strokeWidth={1.8}/>
+          </button>
+          <button onClick={()=>setCaptureOpen(true)} className="min-w-0 flex-1 text-left">
+            <p className="text-[15px] font-semibold tracking-[-0.01em]">Etwas festhalten</p>
+            <p className="mt-1 text-[11px] leading-4 text-black/42">Text, Sprache, Foto oder Datei</p>
+          </button>
+          <ChevronRight className="h-4 w-4 shrink-0 text-black/25"/>
+        </div>
+      </header>
+
+      {item&&<section className="mt-5">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-[13px] font-semibold">Kipu erinnert dich</p>
+          <Sparkles className="h-4 w-4 text-[#74a18f]"/>
+        </div>
+        <Link href={`/ideas/${item.id}`} className="kipu-card flex gap-3 p-3.5">
+          <div className="flex h-[68px] w-[68px] shrink-0 items-center justify-center overflow-hidden rounded-[15px] bg-[#edf3ef]">
+            {item.enrichment?.image_url?<img src={item.enrichment.image_url} alt="" className={`h-full w-full ${item.enrichment.image_fit==="contain"?"object-contain p-1":"object-cover"}`}/>:<Sparkles className="h-6 w-6 text-[#74a18f]"/>}
+          </div>
+          <div className="min-w-0 flex-1 self-center">
+            <h2 className="line-clamp-1 text-[13px] font-semibold">{item.title}</h2>
+            <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-black/46">{item.reason}</p>
+          </div>
+          <ChevronRight className="self-center h-4 w-4 shrink-0 text-black/25"/>
+        </Link>
+      </section>}
+
+      <section className="mt-5">
+        <p className="mb-2 text-[13px] font-semibold">Schnellzugriff</p>
+        <div className="grid grid-cols-2 gap-3">
+          <Link href="/nearby" className="rounded-[20px] border border-[#e9e8e3] bg-white p-3.5 shadow-[0_5px_18px_rgba(0,0,0,.035)] active:scale-[.985]">
+            <span className="flex h-9 w-9 items-center justify-center rounded-[11px] bg-[#e8f2ed] text-[#74a18f]"><MapPin className="h-[18px] w-[18px]"/></span>
+            <p className="mt-3 text-[12px] font-semibold">In deiner Nähe</p>
+            <p className="mt-1 text-[9px] leading-3.5 text-black/38">Gespeicherte Orte entdecken</p>
+          </Link>
+          <Link href="/ideas" className="rounded-[20px] border border-[#e9e8e3] bg-white p-3.5 shadow-[0_5px_18px_rgba(0,0,0,.035)] active:scale-[.985]">
+            <span className="flex h-9 w-9 items-center justify-center rounded-[11px] bg-[#e7edf5] text-[#5e7ea4]"><Images className="h-[18px] w-[18px]"/></span>
+            <p className="mt-3 text-[12px] font-semibold">Sammlung</p>
+            <p className="mt-1 text-[9px] leading-3.5 text-black/38">Alle Erinnerungen durchsuchen</p>
+          </Link>
+        </div>
+      </section>
+    </div>
+
+    {captureOpen&&<div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 backdrop-blur-[2px]" onClick={()=>setCaptureOpen(false)}>
+      <section className="w-full max-w-[430px] rounded-t-[30px] bg-[#fbfaf7] px-5 pb-[calc(26px+env(safe-area-inset-bottom))] pt-3 shadow-[0_-18px_50px_rgba(0,0,0,.18)]" onClick={e=>e.stopPropagation()}>
+        <div className="mx-auto h-1 w-10 rounded-full bg-black/12"/>
+        <div className="mt-4 flex items-start justify-between">
+          <div><p className="text-[11px] font-semibold uppercase tracking-[.12em] text-[#74a18f]">Neue Erinnerung</p><h2 className="mt-1 text-[22px] font-semibold tracking-[-.025em]">Wie möchtest du sie festhalten?</h2></div>
+          <button onClick={()=>setCaptureOpen(false)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#efeee9]"><X className="h-4 w-4"/></button>
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          {actions.map(({label,hint,icon:Icon,href,tone})=>label==="Foto"?
+            <button type="button" key={label} onClick={()=>{setCaptureOpen(false);setTimeout(()=>cameraRef.current?.click(),0)}} className="text-left rounded-[20px] border border-[#ecebe7] bg-white p-4 shadow-[0_6px_18px_rgba(0,0,0,.045)] active:scale-[.985]">
+              <span className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${tone}`}><Icon className="h-5 w-5"/></span><p className="mt-3 text-[14px] font-semibold">{label}</p><p className="mt-1 text-[10px] leading-4 text-black/42">{hint}</p>
+            </button>:
+            <Link href={href} key={label} onClick={()=>setCaptureOpen(false)} className="rounded-[20px] border border-[#ecebe7] bg-white p-4 shadow-[0_6px_18px_rgba(0,0,0,.045)] active:scale-[.985]">
+              <span className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${tone}`}><Icon className="h-5 w-5"/></span><p className="mt-3 text-[14px] font-semibold">{label}</p><p className="mt-1 text-[10px] leading-4 text-black/42">{hint}</p>
+            </Link>)}
+        </div>
+      </section>
+    </div>}
+  </main>;
+}
