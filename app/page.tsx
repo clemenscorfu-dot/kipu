@@ -115,20 +115,26 @@ export default function Home(){
       </section>
     </div>
 
-    {captureOpen&&<div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 backdrop-blur-[2px]" onClick={()=>setCaptureOpen(false)}>
-      <section className="w-full max-w-[430px] rounded-t-[30px] bg-[#fbfaf7] px-5 pb-[calc(26px+env(safe-area-inset-bottom))] pt-3 shadow-[0_-18px_50px_rgba(0,0,0,.18)]" onClick={e=>e.stopPropagation()}>
-        <div className="mx-auto h-1 w-10 rounded-full bg-black/12"/>
-        <div className="mt-4 flex items-start justify-between">
-          <div><p className="text-[11px] font-semibold uppercase tracking-[.12em] text-[#74a18f]">Neue Erinnerung</p><h2 className="mt-1 text-[22px] font-semibold tracking-[-.025em]">Wie möchtest du sie festhalten?</h2></div>
+    {captureOpen&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-5 backdrop-blur-[3px]" onClick={()=>setCaptureOpen(false)}>
+      <section className="w-full max-w-[390px] rounded-[28px] bg-[#fbfaf7] p-5 shadow-[0_24px_70px_rgba(0,0,0,.22)]" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[.14em] text-[#74a18f]">Neue Erinnerung</p>
+            <h2 className="mt-1.5 text-[21px] font-semibold leading-[1.08] tracking-[-.025em]">Wie möchtest du sie festhalten?</h2>
+          </div>
           <button onClick={()=>setCaptureOpen(false)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#efeee9]"><X className="h-4 w-4"/></button>
         </div>
         <div className="mt-5 grid grid-cols-2 gap-3">
           {actions.map(({label,hint,icon:Icon,href,tone})=>label==="Foto"?
-            <button type="button" key={label} onClick={()=>{setCaptureOpen(false);setTimeout(()=>cameraRef.current?.click(),0)}} className="text-left rounded-[20px] border border-[#ecebe7] bg-white p-4 shadow-[0_6px_18px_rgba(0,0,0,.045)] active:scale-[.985]">
-              <span className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${tone}`}><Icon className="h-5 w-5"/></span><p className="mt-3 text-[14px] font-semibold">{label}</p><p className="mt-1 text-[10px] leading-4 text-black/42">{hint}</p>
+            <button type="button" key={label} onClick={()=>{setCaptureOpen(false);setTimeout(()=>cameraRef.current?.click(),0)}} className="min-h-[128px] text-left rounded-[20px] border border-[#ecebe7] bg-white p-4 shadow-[0_6px_18px_rgba(0,0,0,.04)] active:scale-[.985]">
+              <span className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${tone}`}><Icon className="h-5 w-5"/></span>
+              <p className="mt-3 text-[14px] font-semibold">{label}</p>
+              <p className="mt-1 text-[10px] leading-4 text-black/42">{hint}</p>
             </button>:
-            <Link href={href} key={label} onClick={()=>setCaptureOpen(false)} className="rounded-[20px] border border-[#ecebe7] bg-white p-4 shadow-[0_6px_18px_rgba(0,0,0,.045)] active:scale-[.985]">
-              <span className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${tone}`}><Icon className="h-5 w-5"/></span><p className="mt-3 text-[14px] font-semibold">{label}</p><p className="mt-1 text-[10px] leading-4 text-black/42">{hint}</p>
+            <Link href={href} key={label} onClick={()=>setCaptureOpen(false)} className="min-h-[128px] rounded-[20px] border border-[#ecebe7] bg-white p-4 shadow-[0_6px_18px_rgba(0,0,0,.04)] active:scale-[.985]">
+              <span className={`flex h-11 w-11 items-center justify-center rounded-[14px] ${tone}`}><Icon className="h-5 w-5"/></span>
+              <p className="mt-3 text-[14px] font-semibold">{label}</p>
+              <p className="mt-1 text-[10px] leading-4 text-black/42">{hint}</p>
             </Link>)}
         </div>
       </section>
