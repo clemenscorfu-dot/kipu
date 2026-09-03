@@ -7,7 +7,6 @@ import {useRouter} from "next/navigation";
 import {ensureAnonymousSession,getSupabaseBrowserClient} from "@/lib/supabase-browser";
 import {KipuLogo} from "@/components/kipu-logo";
 
-const brand="#74a18f";
 const actions=[
   {label:"Text",hint:"Gedanke oder Idee notieren",icon:Pencil,href:"/write",tone:"bg-[#fff7e8] text-[#d99a39]"},
   {label:"Sprache",hint:"Einfach erzählen",icon:Mic,href:"/voice",tone:"bg-[#eeecff] text-[#6f78f6]"},
@@ -65,49 +64,52 @@ export default function Home(){
         </button>
       </div>
 
-      <header className="mt-5">
-        <h1 className="max-w-[320px] text-[26px] font-semibold leading-[1.06] tracking-[-0.035em]">Was möchtest du heute festhalten?</h1>
-        <div className="mt-4 flex items-center gap-4 rounded-[24px] border border-[#e8e7e2] bg-white px-4 py-3.5 shadow-[0_8px_26px_rgba(0,0,0,.045)]">
-          <button onClick={()=>setCaptureOpen(true)} aria-label="Neue Erinnerung festhalten" className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-full bg-[#74a18f] text-white shadow-[0_10px_24px_rgba(116,161,143,.24)] active:scale-95">
-            <Plus className="h-8 w-8" strokeWidth={1.8}/>
+      <header className="mt-4">
+        <h1 className="max-w-[310px] text-[25px] font-semibold leading-[1.05] tracking-[-0.035em]">Was möchtest du heute festhalten?</h1>
+        <div className="mt-4 flex flex-col items-center">
+          <button onClick={()=>setCaptureOpen(true)} aria-label="Neue Erinnerung festhalten" className="relative flex h-[84px] w-[84px] items-center justify-center rounded-full bg-[#74a18f] text-white shadow-[0_12px_28px_rgba(116,161,143,.24)] active:scale-95">
+            <span className="absolute inset-[-6px] rounded-full border border-[#74a18f]/15"/>
+            <Plus className="h-10 w-10" strokeWidth={1.7}/>
           </button>
-          <button onClick={()=>setCaptureOpen(true)} className="min-w-0 flex-1 text-left">
-            <p className="text-[15px] font-semibold tracking-[-0.01em]">Etwas festhalten</p>
-            <p className="mt-1 text-[11px] leading-4 text-black/42">Text, Sprache, Foto oder Datei</p>
-          </button>
-          <ChevronRight className="h-4 w-4 shrink-0 text-black/25"/>
+          <button onClick={()=>setCaptureOpen(true)} className="mt-2 text-center text-[11px] font-medium text-black/42">Text, Sprache, Foto oder Datei</button>
         </div>
       </header>
 
-      {item&&<section className="mt-5">
+      {item&&<section className="mt-4">
         <div className="mb-2 flex items-center justify-between">
           <p className="text-[13px] font-semibold">Kipu erinnert dich</p>
           <Sparkles className="h-4 w-4 text-[#74a18f]"/>
         </div>
-        <Link href={`/ideas/${item.id}`} className="kipu-card flex gap-3 p-3.5">
-          <div className="flex h-[68px] w-[68px] shrink-0 items-center justify-center overflow-hidden rounded-[15px] bg-[#edf3ef]">
-            {item.enrichment?.image_url?<img src={item.enrichment.image_url} alt="" className={`h-full w-full ${item.enrichment.image_fit==="contain"?"object-contain p-1":"object-cover"}`}/>:<Sparkles className="h-6 w-6 text-[#74a18f]"/>}
+        <Link href={`/ideas/${item.id}`} className="kipu-card flex gap-3 p-3">
+          <div className="flex h-[62px] w-[62px] shrink-0 items-center justify-center overflow-hidden rounded-[14px] bg-[#edf3ef]">
+            {item.enrichment?.image_url?<img src={item.enrichment.image_url} alt="" className={`h-full w-full ${item.enrichment.image_fit==="contain"?"object-contain p-1":"object-cover"}`}/>:<Sparkles className="h-5 w-5 text-[#74a18f]"/>}
           </div>
           <div className="min-w-0 flex-1 self-center">
-            <h2 className="line-clamp-1 text-[13px] font-semibold">{item.title}</h2>
-            <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-black/46">{item.reason}</p>
+            <h2 className="line-clamp-1 text-[12px] font-semibold">{item.title}</h2>
+            <p className="mt-1 line-clamp-2 text-[9.5px] leading-3.5 text-black/46">{item.reason}</p>
           </div>
           <ChevronRight className="self-center h-4 w-4 shrink-0 text-black/25"/>
         </Link>
       </section>}
 
-      <section className="mt-5">
+      <section className="mt-4">
         <p className="mb-2 text-[13px] font-semibold">Schnellzugriff</p>
         <div className="grid grid-cols-2 gap-3">
-          <Link href="/nearby" className="rounded-[20px] border border-[#e9e8e3] bg-white p-3.5 shadow-[0_5px_18px_rgba(0,0,0,.035)] active:scale-[.985]">
-            <span className="flex h-9 w-9 items-center justify-center rounded-[11px] bg-[#e8f2ed] text-[#74a18f]"><MapPin className="h-[18px] w-[18px]"/></span>
-            <p className="mt-3 text-[12px] font-semibold">In deiner Nähe</p>
-            <p className="mt-1 text-[9px] leading-3.5 text-black/38">Gespeicherte Orte entdecken</p>
+          <Link href="/nearby" className="rounded-[18px] border border-[#e9e8e3] bg-white p-3 shadow-[0_4px_16px_rgba(0,0,0,.03)] active:scale-[.985]">
+            <div className="flex items-start justify-between gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#e8f2ed] text-[#74a18f]"><MapPin className="h-4 w-4"/></span>
+              <ChevronRight className="mt-1 h-3.5 w-3.5 text-black/22"/>
+            </div>
+            <p className="mt-2.5 text-[11px] font-semibold">In deiner Nähe</p>
+            <p className="mt-1 text-[8.5px] leading-3.5 text-black/38">Gespeicherte Orte entdecken</p>
           </Link>
-          <Link href="/ideas" className="rounded-[20px] border border-[#e9e8e3] bg-white p-3.5 shadow-[0_5px_18px_rgba(0,0,0,.035)] active:scale-[.985]">
-            <span className="flex h-9 w-9 items-center justify-center rounded-[11px] bg-[#e7edf5] text-[#5e7ea4]"><Images className="h-[18px] w-[18px]"/></span>
-            <p className="mt-3 text-[12px] font-semibold">Sammlung</p>
-            <p className="mt-1 text-[9px] leading-3.5 text-black/38">Alle Erinnerungen durchsuchen</p>
+          <Link href="/ideas" className="rounded-[18px] border border-[#e9e8e3] bg-white p-3 shadow-[0_4px_16px_rgba(0,0,0,.03)] active:scale-[.985]">
+            <div className="flex items-start justify-between gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#e7edf2] text-[#657f92]"><Images className="h-4 w-4"/></span>
+              <ChevronRight className="mt-1 h-3.5 w-3.5 text-black/22"/>
+            </div>
+            <p className="mt-2.5 text-[11px] font-semibold">Sammlung</p>
+            <p className="mt-1 text-[8.5px] leading-3.5 text-black/38">Alle Erinnerungen durchsuchen</p>
           </Link>
         </div>
       </section>
