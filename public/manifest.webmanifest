@@ -1,7 +1,7 @@
 {
-  "name": "kipu",
-  "short_name": "kipu",
-  "description": "save now. find later.",
+  "name": "Kipu",
+  "short_name": "Kipu",
+  "description": "Festhalten. Wiederfinden.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f3eee5",
