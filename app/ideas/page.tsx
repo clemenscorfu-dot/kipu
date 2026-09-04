@@ -1,4 +1,335 @@
 "use client";
-import{ArrowDownAZ,ArrowLeft,CalendarArrowDown,CalendarArrowUp,Check,ChevronDown,Filter,LoaderCircle,Search,Sparkles,Trash2,X}from"lucide-react";import Link from"next/link";import{useEffect,useMemo,useRef,useState}from"react";import{ensureAnonymousSession,getSupabaseBrowserClient}from"@/lib/supabase-browser";
-type IdeaRow={id:string;title:string;summary:string|null;tags:string[];location_label:string|null;created_at:string;enrichment:{category?:string;image_url?:string|null;image_fit?:"cover"|"contain";processing_status?:"pending"|"processing"|"ready"|"failed"|"merged"}};type CategoryRow={id:string;parent_id:string|null;name:string;sort_order:number};type AssignmentRow={idea_id:string;category_id:string};type SortMode="newest"|"oldest"|"az";function emojiFor(c?:string){if(c==="Buch")return"📚";if(c==="Restaurant"||c==="Essen")return"🍽️";if(c==="Produkt")return"📦";if(c==="Film")return"🎬";return"📌"}
-export default function IdeasPage(){const[ideas,setIdeas]=useState<IdeaRow[]>([]),[categories,setCategories]=useState<CategoryRow[]>([]),[assignments,setAssignments]=useState<AssignmentRow[]>([]),[loading,setLoading]=useState(true),[deleting,setDeleting]=useState(false),[organizing,setOrganizing]=useState(false),[filterOpen,setFilterOpen]=useState(false),[sort,setSort]=useState<SortMode>("newest"),[error,setError]=useState<string|null>(null),[selected,setSelected]=useState("all");const curatorStarted=useRef(false);useEffect(()=>{let active=true,timer:ReturnType<typeof setTimeout>|null=null;async function load(){try{await ensureAnonymousSession();const s=getSupabaseBrowserClient(),[i,c,a]=await Promise.all([s.from("ideas").select("id,title,summary,tags,location_label,created_at,enrichment").order("created_at",{ascending:false}),s.from("categories").select("id,parent_id,name,sort_order").order("sort_order").order("name"),s.from("idea_categories").select("idea_id,category_id")]);if(i.error)throw i.error;if(c.error)throw c.error;if(a.error)throw a.error;if(!active)return;const next=((i.data??[])as IdeaRow[]).filter(x=>x.enrichment?.processing_status!=="merged"),nextCategories=(c.data??[])as CategoryRow[],nextAssignments=(a.data??[])as AssignmentRow[];setIdeas(next);setCategories(nextCategories);setAssignments(nextAssignments);setLoading(false);const ready=next.filter(x=>!["pending","processing","merged"].includes(x.enrichment?.processing_status??"")),assigned=new Set(nextAssignments.map(x=>x.idea_id)),uncategorized=ready.filter(x=>!assigned.has(x.id)),needs=ready.length>0&&(uncategorized.length>0||nextCategories.length===0);if(needs&&!curatorStarted.current){curatorStarted.current=true;setOrganizing(true);const session=(await s.auth.getSession()).data.session;if(session?.access_token)void fetch("/api/categories/backfill",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`}}).then(r=>{if(!r.ok)throw new Error();if(active)timer=setTimeout(load,700)}).catch(()=>active&&setError("Kipu konnte die Kategorien noch nicht aufbauen.")).finally(()=>active&&setOrganizing(false))}else if(next.some(x=>["pending","processing"].includes(x.enrichment?.processing_status??"")))timer=setTimeout(load,3000)}catch(e){if(active){setError(e instanceof Error?e.message:"Ideen konnten nicht geladen werden.");setLoading(false)}}}void load();return()=>{active=false;if(timer)clearTimeout(timer)}},[]);const categoryById=useMemo(()=>new Map(categories.map(c=>[c.id,c])),[categories]),assignmentByIdea=useMemo(()=>{const m=new Map<string,string[]>();for(const a of assignments){const l=m.get(a.idea_id)??[];l.push(a.category_id);m.set(a.idea_id,l)}return m},[assignments]),mainCategories=useMemo(()=>categories.filter(c=>!c.parent_id),[categories]),counts=useMemo(()=>{const m=new Map<string,number>();for(const cat of mainCategories){let n=0;for(const idea of ideas)if((assignmentByIdea.get(idea.id)??[]).some(id=>id===cat.id||categoryById.get(id)?.parent_id===cat.id))n++;m.set(cat.id,n)}return m},[ideas,mainCategories,assignmentByIdea,categoryById]),visibleIdeas=useMemo(()=>{const f=selected==="all"?[...ideas]:ideas.filter(i=>(assignmentByIdea.get(i.id)??[]).some(id=>id===selected||categoryById.get(id)?.parent_id===selected));f.sort((a,b)=>sort==="oldest"?+new Date(a.created_at)-+new Date(b.created_at):sort==="az"?a.title.localeCompare(b.title,"de"): +new Date(b.created_at)-+new Date(a.created_at));return f},[ideas,selected,sort,assignmentByIdea,categoryById]);function displayCategory(id:string){const ids=assignmentByIdea.get(id)??[];return ids.map(x=>categoryById.get(x)).filter(Boolean).sort((a,b)=>Number(Boolean(a?.parent_id))-Number(Boolean(b?.parent_id))).at(-1)?.name??null}async function deleteAllIdeas(){if(!ideas.length||deleting||!confirm(`Wirklich alle ${ideas.length} Ideen löschen?`))return;setDeleting(true);try{const s=getSupabaseBrowserClient(),u=(await s.auth.getUser()).data.user;if(!u)throw new Error();const{error}=await s.from("ideas").delete().eq("user_id",u.id);if(error)throw error;setIdeas([]);setAssignments([])}finally{setDeleting(false)}}return <main className="mx-auto min-h-[100dvh] w-full max-w-[430px] bg-[#fbfaf7] text-[#111]"><header className="px-4 pb-3 pt-4"><div className="flex items-center justify-between"><div className="flex items-center gap-3"><Link href="/" aria-label="Zurück" className="flex h-9 w-9 items-center justify-center rounded-full bg-white shadow-[0_4px_14px_rgba(0,0,0,.06)]"><ArrowLeft className="h-4 w-4"/></Link><div><h1 className="text-[21px] font-semibold tracking-[-.025em]">Sammlung</h1>{organizing&&<p className="text-[9px] text-[#79aa36]">Kipu organisiert…</p>}</div></div><div className="flex items-center gap-3">{ideas.length>0&&<button onClick={deleteAllIdeas} className="text-[#b94b43]">{deleting?<LoaderCircle className="h-4 w-4 animate-spin"/>:<Trash2 className="h-4 w-4"/>}</button>}<button onClick={()=>setFilterOpen(true)}><Filter className="h-5 w-5"/></button><Link href="/search"><Search className="h-5 w-5"/></Link></div></div><label className="relative mt-3 block"><select value={selected} onChange={e=>setSelected(e.target.value)} className="w-full appearance-none rounded-[14px] border border-[#ecebe7] bg-white px-4 py-2.5 pr-10 text-[12px] font-medium outline-none"><option value="all">Alle Kategorien · {ideas.length}</option>{mainCategories.map(c=><option key={c.id} value={c.id}>{c.name} · {counts.get(c.id)??0}</option>)}</select><ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-black/45"/></label></header><section className="border-t border-[#ecebe7] px-4 py-3">{loading&&<div className="flex justify-center py-16"><LoaderCircle className="animate-spin text-[#79aa36]"/></div>}{error&&<div className="mb-3 rounded-xl bg-[#fff0ef] p-3 text-xs">{error}</div>}{!loading&&!error&&ideas.length===0&&<div className="py-16 text-center text-sm text-black/45">Noch keine Erinnerungen gespeichert.</div>}<div className="space-y-2">{visibleIdeas.map(idea=>{const image=idea.enrichment?.image_url,fit=idea.enrichment?.image_fit??"cover",status=idea.enrichment?.processing_status,processing=status==="pending"||status==="processing",cat=displayCategory(idea.id);return <Link href={`/ideas/${idea.id}`} key={idea.id} className="flex gap-3 rounded-[18px] border border-[#ecebe7] bg-white p-2.5 shadow-[0_4px_16px_rgba(0,0,0,.045)]"><div className="flex h-[76px] w-[76px] shrink-0 items-center justify-center overflow-hidden rounded-[14px] bg-[#e8ece4] text-[27px]">{image?<img src={image} alt="" className={`h-full w-full ${fit==="contain"?"object-contain p-1":"object-cover"}`}/>:processing?<Sparkles className="h-6 w-6 animate-pulse text-[#79aa36]"/>:emojiFor(idea.enrichment?.category)}</div><div className="min-w-0 flex-1 py-1"><h2 className="line-clamp-2 text-[14px] font-semibold leading-5">{idea.title}</h2><p className="mt-1 line-clamp-1 text-[11px] text-black/45">{processing?"Kipu ergänzt Details…":idea.location_label||idea.summary||"Gespeicherte Erinnerung"}</p><div className="mt-2 flex items-center justify-between"><span className="text-[9px] text-black/35">{new Date(idea.created_at).toLocaleDateString("de-CH")}</span>{cat&&<span className="rounded-full bg-[#f0efeb] px-2 py-1 text-[9px] text-black/55">{cat}</span>}</div></div></Link>})}</div></section>{filterOpen&&<div className="fixed inset-0 z-50 flex items-end justify-center bg-black/25" onClick={()=>setFilterOpen(false)}><div className="w-full max-w-[430px] rounded-t-[28px] bg-[#fbfaf7] p-5 pb-8" onClick={e=>e.stopPropagation()}><div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-semibold">Filtern & sortieren</h2><button onClick={()=>setFilterOpen(false)}><X className="h-5 w-5"/></button></div><p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-black/40">Kategorie</p><div className="mb-5 flex flex-wrap gap-2"><button onClick={()=>setSelected("all")} className={`rounded-full px-3 py-2 text-xs ${selected==="all"?"bg-black text-white":"bg-[#f0efeb]"}`}>Alle</button>{mainCategories.map(c=><button key={c.id} onClick={()=>setSelected(c.id)} className={`rounded-full px-3 py-2 text-xs ${selected===c.id?"bg-black text-white":"bg-[#f0efeb]"}`}>{c.name}</button>)}</div><p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-black/40">Sortierung</p>{([{id:"newest",label:"Neueste zuerst",icon:CalendarArrowDown},{id:"oldest",label:"Älteste zuerst",icon:CalendarArrowUp},{id:"az",label:"Titel A–Z",icon:ArrowDownAZ}]as const).map(o=>{const Icon=o.icon;return <button key={o.id} onClick={()=>setSort(o.id)} className="flex w-full items-center justify-between rounded-xl px-3 py-3 text-sm"><span className="flex items-center gap-3"><Icon className="h-4 w-4"/>{o.label}</span>{sort===o.id&&<Check className="h-4 w-4 text-[#79aa36]"/>}</button>})}<button onClick={()=>setFilterOpen(false)} className="mt-4 w-full rounded-full bg-black py-3 text-sm font-semibold text-white">Anwenden</button></div></div>}</main>}
+
+import {
+  ArrowDownAZ, ArrowLeft, CalendarArrowDown, CalendarArrowUp, Check, ChevronDown,
+  Filter, LoaderCircle, Search, Sparkles, Trash2, X,
+} from "lucide-react";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ensureAnonymousSession, getSupabaseBrowserClient } from "@/lib/supabase-browser";
+
+type IdeaRow = {
+  id: string;
+  title: string;
+  summary: string | null;
+  tags: string[];
+  location_label: string | null;
+  created_at: string;
+  enrichment: {
+    category?: string;
+    image_url?: string | null;
+    image_fit?: "cover" | "contain";
+    processing_status?: "pending" | "processing" | "ready" | "failed" | "merged";
+  };
+};
+type CategoryRow = { id: string; parent_id: string | null; name: string; sort_order: number };
+type AssignmentRow = { idea_id: string; category_id: string };
+type SortMode = "newest" | "oldest" | "az";
+
+function emojiFor(c?: string) {
+  if (c === "Buch") return "📚";
+  if (c === "Restaurant" || c === "Essen") return "🍽️";
+  if (c === "Produkt") return "📦";
+  if (c === "Film") return "🎬";
+  return "📌";
+}
+
+function SwipeIdeaCard({
+  idea,
+  category,
+  onDelete,
+}: {
+  idea: IdeaRow;
+  category: string | null;
+  onDelete: (idea: IdeaRow) => Promise<void>;
+}) {
+  const [offset, setOffset] = useState(0);
+  const [armed, setArmed] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const gesture = useRef({ startX: 0, startY: 0, width: 1, swiping: false, moved: false });
+
+  const image = idea.enrichment?.image_url;
+  const fit = idea.enrichment?.image_fit ?? "cover";
+  const status = idea.enrichment?.processing_status;
+  const processing = status === "pending" || status === "processing";
+
+  function reset() {
+    setOffset(0);
+    setArmed(false);
+  }
+
+  function pointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (confirming || deleting) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    gesture.current = { startX: e.clientX, startY: e.clientY, width: rect.width, swiping: false, moved: false };
+  }
+
+  function pointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!gesture.current.startX) return;
+    const dx = e.clientX - gesture.current.startX;
+    const dy = e.clientY - gesture.current.startY;
+    if (!gesture.current.swiping && Math.abs(dx) > 7 && Math.abs(dx) > Math.abs(dy)) {
+      gesture.current.swiping = true;
+      gesture.current.moved = true;
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    }
+    if (!gesture.current.swiping) return;
+    const next = Math.max(-gesture.current.width * 0.42, Math.min(0, dx));
+    setOffset(next);
+    setArmed(Math.abs(next) >= gesture.current.width * 0.3);
+  }
+
+  function pointerEnd(e: React.PointerEvent<HTMLDivElement>) {
+    if (!gesture.current.startX) return;
+    const thresholdReached = gesture.current.swiping && Math.abs(offset) >= gesture.current.width * 0.3;
+    const wasMoved = gesture.current.moved;
+    gesture.current.startX = 0;
+    gesture.current.startY = 0;
+    gesture.current.swiping = false;
+    if (thresholdReached) {
+      setOffset(-gesture.current.width * 0.32);
+      setArmed(true);
+      window.setTimeout(() => setConfirming(true), 120);
+    } else {
+      reset();
+    }
+    if (wasMoved) e.preventDefault();
+  }
+
+  async function confirmDelete() {
+    setDeleting(true);
+    try {
+      await onDelete(idea);
+    } finally {
+      setDeleting(false);
+      setConfirming(false);
+      reset();
+    }
+  }
+
+  return (
+    <>
+      <div className="relative overflow-hidden rounded-[18px] bg-[#fff0ef]">
+        <div className="absolute inset-y-0 right-0 flex w-[34%] items-center justify-center px-3 text-center text-[#b83d35]">
+          <div>
+            <Trash2 className="mx-auto h-5 w-5" />
+            <p className="mt-1 text-[10px] font-semibold">Zum Löschen loslassen</p>
+          </div>
+        </div>
+
+        <div
+          onPointerDown={pointerDown}
+          onPointerMove={pointerMove}
+          onPointerUp={pointerEnd}
+          onPointerCancel={pointerEnd}
+          style={{ transform: `translateX(${offset}px)`, touchAction: "pan-y" }}
+          className={`relative transition-[transform,border-color,box-shadow] duration-150 ${armed ? "rounded-[18px] border border-[#d84a42] shadow-[0_0_0_2px_rgba(216,74,66,.10)]" : "border border-transparent"}`}
+        >
+          <Link
+            href={`/ideas/${idea.id}`}
+            onClick={(e) => {
+              if (gesture.current.moved || offset !== 0 || armed) {
+                e.preventDefault();
+                if (armed) setConfirming(true);
+                else reset();
+              }
+            }}
+            className="flex gap-3 rounded-[17px] border border-[#ecebe7] bg-white p-2.5 shadow-[0_4px_16px_rgba(0,0,0,.045)]"
+          >
+            <div className="flex h-[76px] w-[76px] shrink-0 items-center justify-center overflow-hidden rounded-[14px] bg-[#e8ece4] text-[27px]">
+              {image ? (
+                <img src={image} alt="" className={`h-full w-full ${fit === "contain" ? "object-contain p-1" : "object-cover"}`} />
+              ) : processing ? (
+                <Sparkles className="h-6 w-6 animate-pulse text-[#79aa36]" />
+              ) : (
+                emojiFor(idea.enrichment?.category)
+              )}
+            </div>
+            <div className="min-w-0 flex-1 py-1">
+              <h2 className="line-clamp-2 text-[14px] font-semibold leading-5">{idea.title}</h2>
+              <p className="mt-1 line-clamp-1 text-[11px] text-black/45">
+                {processing ? "Kipu ergänzt Details…" : idea.location_label || idea.summary || "Gespeicherte Erinnerung"}
+              </p>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-[9px] text-black/35">{new Date(idea.created_at).toLocaleDateString("de-CH")}</span>
+                {category && <span className="rounded-full bg-[#f0efeb] px-2 py-1 text-[9px] text-black/55">{category}</span>}
+              </div>
+            </div>
+          </Link>
+        </div>
+      </div>
+
+      {confirming && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/30 px-3 pb-[max(16px,env(safe-area-inset-bottom))]" onClick={() => { setConfirming(false); reset(); }}>
+          <div className="w-full max-w-[406px] rounded-[24px] bg-[#fbfaf7] p-5 shadow-[0_18px_55px_rgba(0,0,0,.20)]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#fde5e3] text-[#b83d35]"><Trash2 className="h-5 w-5" /></div>
+              <div>
+                <h3 className="text-[16px] font-semibold">Erinnerung löschen?</h3>
+                <p className="mt-1 text-[12px] leading-5 text-black/50">„{idea.title}“ wird dauerhaft aus Kipu entfernt.</p>
+              </div>
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <button disabled={deleting} onClick={() => { setConfirming(false); reset(); }} className="rounded-full bg-[#efeee9] py-3 text-[13px] font-semibold">Abbrechen</button>
+              <button disabled={deleting} onClick={confirmDelete} className="flex items-center justify-center gap-2 rounded-full bg-[#c94840] py-3 text-[13px] font-semibold text-white disabled:opacity-60">
+                {deleting && <LoaderCircle className="h-4 w-4 animate-spin" />} Löschen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function IdeasPage() {
+  const [ideas, setIdeas] = useState<IdeaRow[]>([]);
+  const [categories, setCategories] = useState<CategoryRow[]>([]);
+  const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
+  const [organizing, setOrganizing] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [sort, setSort] = useState<SortMode>("newest");
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState("all");
+  const curatorStarted = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    async function load() {
+      try {
+        await ensureAnonymousSession();
+        const s = getSupabaseBrowserClient();
+        const [i, c, a] = await Promise.all([
+          s.from("ideas").select("id,title,summary,tags,location_label,created_at,enrichment").order("created_at", { ascending: false }),
+          s.from("categories").select("id,parent_id,name,sort_order").order("sort_order").order("name"),
+          s.from("idea_categories").select("idea_id,category_id"),
+        ]);
+        if (i.error) throw i.error;
+        if (c.error) throw c.error;
+        if (a.error) throw a.error;
+        if (!active) return;
+        const next = ((i.data ?? []) as IdeaRow[]).filter((x) => x.enrichment?.processing_status !== "merged");
+        const nextCategories = (c.data ?? []) as CategoryRow[];
+        const nextAssignments = (a.data ?? []) as AssignmentRow[];
+        setIdeas(next);
+        setCategories(nextCategories);
+        setAssignments(nextAssignments);
+        setLoading(false);
+        const ready = next.filter((x) => !["pending", "processing", "merged"].includes(x.enrichment?.processing_status ?? ""));
+        const assigned = new Set(nextAssignments.map((x) => x.idea_id));
+        const uncategorized = ready.filter((x) => !assigned.has(x.id));
+        const needs = ready.length > 0 && (uncategorized.length > 0 || nextCategories.length === 0);
+        if (needs && !curatorStarted.current) {
+          curatorStarted.current = true;
+          setOrganizing(true);
+          const session = (await s.auth.getSession()).data.session;
+          if (session?.access_token) void fetch("/api/categories/backfill", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}` } })
+            .then((r) => { if (!r.ok) throw new Error(); if (active) timer = setTimeout(load, 700); })
+            .catch(() => active && setError("Kipu konnte die Kategorien noch nicht aufbauen."))
+            .finally(() => active && setOrganizing(false));
+        } else if (next.some((x) => ["pending", "processing"].includes(x.enrichment?.processing_status ?? ""))) {
+          timer = setTimeout(load, 3000);
+        }
+      } catch (e) {
+        if (active) {
+          setError(e instanceof Error ? e.message : "Ideen konnten nicht geladen werden.");
+          setLoading(false);
+        }
+      }
+    }
+    void load();
+    return () => { active = false; if (timer) clearTimeout(timer); };
+  }, []);
+
+  const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const assignmentByIdea = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const a of assignments) { const l = m.get(a.idea_id) ?? []; l.push(a.category_id); m.set(a.idea_id, l); }
+    return m;
+  }, [assignments]);
+  const mainCategories = useMemo(() => categories.filter((c) => !c.parent_id), [categories]);
+  const counts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const cat of mainCategories) {
+      let n = 0;
+      for (const idea of ideas) if ((assignmentByIdea.get(idea.id) ?? []).some((id) => id === cat.id || categoryById.get(id)?.parent_id === cat.id)) n++;
+      m.set(cat.id, n);
+    }
+    return m;
+  }, [ideas, mainCategories, assignmentByIdea, categoryById]);
+  const visibleIdeas = useMemo(() => {
+    const f = selected === "all" ? [...ideas] : ideas.filter((i) => (assignmentByIdea.get(i.id) ?? []).some((id) => id === selected || categoryById.get(id)?.parent_id === selected));
+    f.sort((a, b) => sort === "oldest" ? +new Date(a.created_at) - +new Date(b.created_at) : sort === "az" ? a.title.localeCompare(b.title, "de") : +new Date(b.created_at) - +new Date(a.created_at));
+    return f;
+  }, [ideas, selected, sort, assignmentByIdea, categoryById]);
+
+  function displayCategory(id: string) {
+    const ids = assignmentByIdea.get(id) ?? [];
+    return ids.map((x) => categoryById.get(x)).filter(Boolean).sort((a, b) => Number(Boolean(a?.parent_id)) - Number(Boolean(b?.parent_id))).at(-1)?.name ?? null;
+  }
+
+  async function deleteIdea(idea: IdeaRow) {
+    const s = getSupabaseBrowserClient();
+    const u = (await s.auth.getUser()).data.user;
+    if (!u) throw new Error("Nicht angemeldet");
+    const assignmentDelete = await s.from("idea_categories").delete().eq("idea_id", idea.id);
+    if (assignmentDelete.error) throw assignmentDelete.error;
+    const result = await s.from("ideas").delete().eq("id", idea.id).eq("user_id", u.id);
+    if (result.error) throw result.error;
+    setIdeas((current) => current.filter((x) => x.id !== idea.id));
+    setAssignments((current) => current.filter((x) => x.idea_id !== idea.id));
+  }
+
+  async function deleteAllIdeas() {
+    if (!ideas.length || deleting || !confirm(`Wirklich alle ${ideas.length} Ideen löschen?`)) return;
+    setDeleting(true);
+    try {
+      const s = getSupabaseBrowserClient(), u = (await s.auth.getUser()).data.user;
+      if (!u) throw new Error();
+      const { error } = await s.from("ideas").delete().eq("user_id", u.id);
+      if (error) throw error;
+      setIdeas([]);
+      setAssignments([]);
+    } finally { setDeleting(false); }
+  }
+
+  return (
+    <main className="mx-auto min-h-[100dvh] w-full max-w-[430px] bg-[#fbfaf7] text-[#111]">
+      <header className="px-4 pb-3 pt-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link href="/" aria-label="Zurück" className="flex h-9 w-9 items-center justify-center rounded-full bg-white shadow-[0_4px_14px_rgba(0,0,0,.06)]"><ArrowLeft className="h-4 w-4" /></Link>
+            <div><h1 className="text-[21px] font-semibold tracking-[-.025em]">Sammlung</h1>{organizing && <p className="text-[9px] text-[#79aa36]">Kipu organisiert…</p>}</div>
+          </div>
+          <div className="flex items-center gap-3">
+            {ideas.length > 0 && <button onClick={deleteAllIdeas} className="text-[#b94b43]">{deleting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</button>}
+            <button onClick={() => setFilterOpen(true)}><Filter className="h-5 w-5" /></button>
+            <Link href="/search"><Search className="h-5 w-5" /></Link>
+          </div>
+        </div>
+        <label className="relative mt-3 block">
+          <select value={selected} onChange={(e) => setSelected(e.target.value)} className="w-full appearance-none rounded-[14px] border border-[#ecebe7] bg-white px-4 py-2.5 pr-10 text-[12px] font-medium outline-none">
+            <option value="all">Alle Kategorien · {ideas.length}</option>
+            {mainCategories.map((c) => <option key={c.id} value={c.id}>{c.name} · {counts.get(c.id) ?? 0}</option>)}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-black/45" />
+        </label>
+      </header>
+
+      <section className="border-t border-[#ecebe7] px-4 py-3">
+        {loading && <div className="flex justify-center py-16"><LoaderCircle className="animate-spin text-[#79aa36]" /></div>}
+        {error && <div className="mb-3 rounded-xl bg-[#fff0ef] p-3 text-xs">{error}</div>}
+        {!loading && !error && ideas.length === 0 && <div className="py-16 text-center text-sm text-black/45">Noch keine Erinnerungen gespeichert.</div>}
+        <div className="space-y-2">
+          {visibleIdeas.map((idea) => <SwipeIdeaCard key={idea.id} idea={idea} category={displayCategory(idea.id)} onDelete={deleteIdea} />)}
+        </div>
+      </section>
+
+      {filterOpen && <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/25" onClick={() => setFilterOpen(false)}><div className="w-full max-w-[430px] rounded-t-[28px] bg-[#fbfaf7] p-5 pb-8" onClick={(e) => e.stopPropagation()}><div className="mb-5 flex items-center justify-between"><h2 className="text-lg font-semibold">Filtern & sortieren</h2><button onClick={() => setFilterOpen(false)}><X className="h-5 w-5" /></button></div><p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-black/40">Kategorie</p><div className="mb-5 flex flex-wrap gap-2"><button onClick={() => setSelected("all")} className={`rounded-full px-3 py-2 text-xs ${selected === "all" ? "bg-black text-white" : "bg-[#f0efeb]"}`}>Alle</button>{mainCategories.map((c) => <button key={c.id} onClick={() => setSelected(c.id)} className={`rounded-full px-3 py-2 text-xs ${selected === c.id ? "bg-black text-white" : "bg-[#f0efeb]"}`}>{c.name}</button>)}</div><p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-black/40">Sortierung</p>{([{ id: "newest", label: "Neueste zuerst", icon: CalendarArrowDown }, { id: "oldest", label: "Älteste zuerst", icon: CalendarArrowUp }, { id: "az", label: "Titel A–Z", icon: ArrowDownAZ }] as const).map((o) => { const Icon = o.icon; return <button key={o.id} onClick={() => setSort(o.id)} className="flex w-full items-center justify-between rounded-xl px-3 py-3 text-sm"><span className="flex items-center gap-3"><Icon className="h-4 w-4" />{o.label}</span>{sort === o.id && <Check className="h-4 w-4 text-[#79aa36]" />}</button>; })}<button onClick={() => setFilterOpen(false)} className="mt-4 w-full rounded-full bg-black py-3 text-sm font-semibold text-white">Anwenden</button></div></div>}
+    </main>
+  );
+}
