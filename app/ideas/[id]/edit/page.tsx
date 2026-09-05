@@ -1,0 +1,101 @@
+"use client";
+
+import {ArrowLeft,Check,ImagePlus,LoaderCircle,Plus,Trash2,X} from "lucide-react";
+import Link from "next/link";
+import {useParams,useRouter,useSearchParams} from "next/navigation";
+import {useEffect,useMemo,useRef,useState} from "react";
+import {ensureAnonymousSession,getSupabaseBrowserClient} from "@/lib/supabase-browser";
+import {stashIdeaPreview} from "@/lib/kipu-idea-preview";
+
+type Fact={label:string;value:string};
+type Enrichment={
+  category?:string;
+  facts?:Fact[];
+  image_url?:string|null;
+  image_fit?:"cover"|"contain";
+  [key:string]:unknown;
+};
+type Idea={id:string;original_input:string;title:string;summary:string|null;tags:string[];location_label:string|null;enrichment:Enrichment;created_at:string};
+type Category={id:string;parent_id:string|null;name:string;sort_order:number};
+
+async function compressImage(file:Blob):Promise<string>{
+  const bitmap=await createImageBitmap(file);
+  const max=1280,scale=Math.min(1,max/Math.max(bitmap.width,bitmap.height));
+  const canvas=document.createElement("canvas");canvas.width=Math.round(bitmap.width*scale);canvas.height=Math.round(bitmap.height*scale);
+  const ctx=canvas.getContext("2d");if(!ctx){bitmap.close();throw new Error("Bild konnte nicht verarbeitet werden.")}
+  ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();
+  return canvas.toDataURL("image/jpeg",.76);
+}
+
+export default function EditIdeaPage(){
+  const{id}=useParams<{id:string}>(),router=useRouter(),search=useSearchParams(),fileRef=useRef<HTMLInputElement|null>(null);
+  const[idea,setIdea]=useState<Idea|null>(null),[categories,setCategories]=useState<Category[]>([]),[assignedCategoryId,setAssignedCategoryId]=useState<string>("");
+  const[title,setTitle]=useState(""),[note,setNote]=useState(""),[summary,setSummary]=useState(""),[tags,setTags]=useState<string[]>([]),[tagInput,setTagInput]=useState(""),[facts,setFacts]=useState<Fact[]>([]),[image,setImage]=useState<string|null>(null),[imageFit,setImageFit]=useState<"cover"|"contain">("cover");
+  const[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[error,setError]=useState<string|null>(null);
+
+  useEffect(()=>{let active=true;void(async()=>{try{
+    await ensureAnonymousSession();const s=getSupabaseBrowserClient();
+    const[i,c,a]=await Promise.all([
+      (s.from("ideas") as any).select("id,original_input,title,summary,tags,location_label,enrichment,created_at").eq("id",id).maybeSingle(),
+      (s.from("categories") as any).select("id,parent_id,name,sort_order").order("sort_order").order("name"),
+      (s.from("idea_categories") as any).select("category_id").eq("idea_id",id)
+    ]);
+    if(i.error)throw i.error;if(!i.data)throw new Error("Erinnerung nicht gefunden.");if(!active)return;
+    const next=i.data as Idea;setIdea(next);setTitle(next.title??"");setNote(next.original_input??"");setSummary(next.summary??"");setTags((next.tags??[]).slice(0,3));setFacts((next.enrichment?.facts??[]).slice(0,5));setImage(next.enrichment?.image_url??null);setImageFit(next.enrichment?.image_fit??"cover");setCategories((c.data??[]) as Category[]);setAssignedCategoryId(String(a.data?.[0]?.category_id??""));
+  }catch(e){if(active)setError(e instanceof Error?e.message:"Erinnerung konnte nicht geladen werden.")}finally{if(active)setLoading(false)}})();return()=>{active=false}},[id]);
+
+  useEffect(()=>{if(search.get("focus")==="image"&&!loading)setTimeout(()=>fileRef.current?.focus(),0)},[search,loading]);
+
+  const categoryOptions=useMemo(()=>{const byParent=new Map<string,Category[]>();for(const c of categories)if(c.parent_id){const a=byParent.get(c.parent_id)??[];a.push(c);byParent.set(c.parent_id,a)}const out:Array<{id:string;label:string}>=[];for(const c of categories.filter(x=>!x.parent_id)){out.push({id:c.id,label:c.name});for(const child of byParent.get(c.id)??[])out.push({id:child.id,label:`${c.name} · ${child.name}`})}return out},[categories]);
+  function addTag(){const t=tagInput.trim().replace(/^#/,"");if(!t||tags.length>=3||tags.some(x=>x.toLowerCase()===t.toLowerCase()))return;setTags([...tags,t]);setTagInput("")}
+  function updateFact(index:number,key:keyof Fact,value:string){setFacts(facts.map((f,i)=>i===index?{...f,[key]:value}:f))}
+  async function chooseImage(file?:File){if(!file)return;try{setError(null);setImage(await compressImage(file));setImageFit("cover")}catch(e){setError(e instanceof Error?e.message:"Bild konnte nicht verarbeitet werden.")}finally{if(fileRef.current)fileRef.current.value=""}}
+
+  async function save(){if(!idea||saving||!title.trim())return;setSaving(true);setError(null);
+    const selected=categories.find(c=>c.id===assignedCategoryId)??null;
+    const cleanFacts=facts.map(f=>({label:f.label.trim(),value:f.value.trim()})).filter(f=>f.label&&f.value).slice(0,5);
+    const nextEnrichment={...idea.enrichment,category:selected?.name??idea.enrichment.category,facts:cleanFacts,image_url:image,image_fit:imageFit,edited_by_user:true,user_edited_at:new Date().toISOString()};
+    const updated:Idea={...idea,title:title.trim(),original_input:note.trim(),summary:summary.trim()||null,tags:tags.slice(0,3),enrichment:nextEnrichment};
+    // Update the instant detail preview before the network round-trip so navigation stays snappy.
+    stashIdeaPreview(updated);
+    try{
+      const s=getSupabaseBrowserClient();
+      const r=await (s.from("ideas") as any).update({title:updated.title,original_input:updated.original_input,summary:updated.summary,tags:updated.tags,enrichment:nextEnrichment}).eq("id",id);if(r.error)throw r.error;
+      await (s.from("idea_categories") as any).delete().eq("idea_id",id);
+      if(assignedCategoryId){const a=await (s.from("idea_categories") as any).insert({idea_id:id,category_id:assignedCategoryId});if(a.error)throw a.error}
+      router.replace(`/ideas/${id}`);
+    }catch(e){setError(e instanceof Error?e.message:"Änderungen konnten nicht gespeichert werden.");setSaving(false)}
+  }
+
+  if(loading)return <main className="mx-auto flex min-h-[100dvh] max-w-[430px] items-center justify-center bg-[#fbfaf7]"><LoaderCircle className="animate-spin text-[#79aa36]"/></main>;
+  if(error&&!idea)return <main className="mx-auto min-h-[100dvh] max-w-[430px] bg-[#fbfaf7] p-4"><Link href={`/ideas/${id}`}><ArrowLeft className="h-5 w-5"/></Link><p className="mt-6 text-sm">{error}</p></main>;
+
+  return <main className="mx-auto min-h-[100dvh] w-full max-w-[430px] bg-[#fbfaf7] pb-28 text-[#111]">
+    <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e=>void chooseImage(e.target.files?.[0])}/>
+    <header className="sticky top-0 z-20 flex items-center justify-between border-b border-black/5 bg-[#fbfaf7]/95 px-4 py-3 backdrop-blur">
+      <Link href={`/ideas/${id}`} aria-label="Abbrechen" className="flex h-9 w-9 items-center justify-center rounded-full bg-white shadow-[0_4px_14px_rgba(0,0,0,.05)]"><X className="h-4 w-4"/></Link>
+      <span className="text-[14px] font-semibold">Erinnerung bearbeiten</span>
+      <button onClick={()=>void save()} disabled={saving||!title.trim()} className="flex h-9 min-w-9 items-center justify-center rounded-full bg-black px-3 text-white disabled:opacity-35">{saving?<LoaderCircle className="h-4 w-4 animate-spin"/>:<Check className="h-4 w-4"/>}</button>
+    </header>
+
+    <section className="px-4 pt-4">
+      <div className="relative flex h-[210px] items-center justify-center overflow-hidden rounded-[22px] bg-[#e5eadf]">{image?<img src={image} alt="" className={`h-full w-full ${imageFit==="contain"?"object-contain p-4":"object-cover"}`}/>:<ImagePlus className="h-9 w-9 text-black/22"/>}<div className="absolute bottom-3 right-3 flex gap-2"><button onClick={()=>fileRef.current?.click()} className="flex h-9 items-center gap-1.5 rounded-full bg-white px-3 text-[10px] font-semibold shadow"><ImagePlus className="h-4 w-4"/>Ersetzen</button>{image&&<button onClick={()=>setImage(null)} aria-label="Bild entfernen" className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#b94b43] shadow"><Trash2 className="h-4 w-4"/></button>}</div></div>
+      {image&&<div className="mt-2 flex justify-end gap-2"><button onClick={()=>setImageFit("cover")} className={`rounded-full px-3 py-1.5 text-[9px] ${imageFit==="cover"?"bg-black text-white":"bg-[#efeee9]"}`}>Füllen</button><button onClick={()=>setImageFit("contain")} className={`rounded-full px-3 py-1.5 text-[9px] ${imageFit==="contain"?"bg-black text-white":"bg-[#efeee9]"}`}>Ganzes Bild</button></div>}
+    </section>
+
+    <section className="space-y-4 px-4 pt-5">
+      <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[.08em] text-black/35">Titel</span><input value={title} onChange={e=>setTitle(e.target.value)} maxLength={120} className="w-full rounded-[16px] border border-[#e7e5df] bg-white px-4 py-3 text-[15px] font-semibold outline-none focus:border-[#79aa36]"/></label>
+      <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[.08em] text-black/35">Warum gespeichert</span><textarea value={note} onChange={e=>setNote(e.target.value)} rows={3} className="w-full resize-none rounded-[16px] border border-[#e7e5df] bg-white px-4 py-3 text-[13px] leading-5 outline-none focus:border-[#79aa36]"/></label>
+      <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[.08em] text-black/35">Kurz dazu</span><textarea value={summary} onChange={e=>setSummary(e.target.value)} rows={3} className="w-full resize-none rounded-[16px] border border-[#e7e5df] bg-white px-4 py-3 text-[13px] leading-5 outline-none focus:border-[#79aa36]"/></label>
+      <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[.08em] text-black/35">Kategorie</span><select value={assignedCategoryId} onChange={e=>setAssignedCategoryId(e.target.value)} className="w-full rounded-[16px] border border-[#e7e5df] bg-white px-4 py-3 text-[12px] outline-none"><option value="">Keine Änderung / keine Kategorie</option>{categoryOptions.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}</select></label>
+
+      <div><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[.08em] text-black/35">Tags</span><div className="flex flex-wrap gap-2">{tags.map(t=><button key={t} onClick={()=>setTags(tags.filter(x=>x!==t))} className="flex items-center gap-1 rounded-full bg-[#efeee9] px-3 py-2 text-[10px]">{t}<X className="h-3 w-3"/></button>)}</div>{tags.length<3&&<div className="mt-2 flex gap-2"><input value={tagInput} onChange={e=>setTagInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTag()}}} placeholder="Tag hinzufügen" className="min-w-0 flex-1 rounded-[14px] border border-[#e7e5df] bg-white px-3 py-2.5 text-[11px] outline-none"/><button onClick={addTag} className="flex h-10 w-10 items-center justify-center rounded-full bg-[#e8f2ed] text-[#74a18f]"><Plus className="h-4 w-4"/></button></div>}</div>
+
+      <div><div className="mb-2 flex items-center justify-between"><span className="text-[10px] font-semibold uppercase tracking-[.08em] text-black/35">Fakten</span>{facts.length<5&&<button onClick={()=>setFacts([...facts,{label:"",value:""}])} className="text-[10px] font-semibold text-[#65942c]">+ Fakt</button>}</div><div className="space-y-2">{facts.map((f,i)=><div key={i} className="grid grid-cols-[92px_1fr_32px] gap-2"><input value={f.label} onChange={e=>updateFact(i,"label",e.target.value)} placeholder="Art" className="rounded-[12px] border border-[#e7e5df] bg-white px-3 py-2.5 text-[10px] outline-none"/><input value={f.value} onChange={e=>updateFact(i,"value",e.target.value)} placeholder="Wert" className="min-w-0 rounded-[12px] border border-[#e7e5df] bg-white px-3 py-2.5 text-[10px] outline-none"/><button onClick={()=>setFacts(facts.filter((_,x)=>x!==i))} className="flex items-center justify-center text-black/30"><X className="h-4 w-4"/></button></div>)}</div></div>
+
+      {error&&<p className="rounded-[14px] bg-[#fff0ef] px-4 py-3 text-[11px] text-[#a33b34]">{error}</p>}
+    </section>
+
+    <div className="fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-[430px] border-t border-black/5 bg-[#fbfaf7]/96 px-4 pb-[max(14px,env(safe-area-inset-bottom))] pt-3 backdrop-blur"><button onClick={()=>void save()} disabled={saving||!title.trim()} className="flex w-full items-center justify-center gap-2 rounded-full bg-black py-3.5 text-[12px] font-semibold text-white disabled:opacity-40">{saving?<LoaderCircle className="h-4 w-4 animate-spin"/>:<Check className="h-4 w-4"/>}Änderungen speichern</button></div>
+  </main>;
+}
