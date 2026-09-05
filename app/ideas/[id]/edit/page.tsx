@@ -40,9 +40,9 @@ export default function EditIdeaPage(){
       (s.from("categories") as any).select("id,parent_id,name,sort_order").order("sort_order").order("name"),
       (s.from("idea_categories") as any).select("category_id").eq("idea_id",id)
     ]);
-    if(i.error)throw i.error;if(!i.data)throw new Error("Erinnerung nicht gefunden.");if(!active)return;
+    if(i.error)throw i.error;if(!i.data)throw new Error("Idee nicht gefunden.");if(!active)return;
     const next=i.data as Idea;setIdea(next);setTitle(next.title??"");setNote(next.original_input??"");setSummary(next.summary??"");setTags((next.tags??[]).slice(0,3));setFacts((next.enrichment?.facts??[]).slice(0,5));setImage(next.enrichment?.image_url??null);setImageFit(next.enrichment?.image_fit??"cover");setCategories((c.data??[]) as Category[]);setAssignedCategoryId(String(a.data?.[0]?.category_id??""));
-  }catch(e){if(active)setError(e instanceof Error?e.message:"Erinnerung konnte nicht geladen werden.")}finally{if(active)setLoading(false)}})();return()=>{active=false}},[id]);
+  }catch(e){if(active)setError(e instanceof Error?e.message:"Idee konnte nicht geladen werden.")}finally{if(active)setLoading(false)}})();return()=>{active=false}},[id]);
 
   useEffect(()=>{if(search.get("focus")==="image"&&!loading)setTimeout(()=>fileRef.current?.focus(),0)},[search,loading]);
 
@@ -56,7 +56,6 @@ export default function EditIdeaPage(){
     const cleanFacts=facts.map(f=>({label:f.label.trim(),value:f.value.trim()})).filter(f=>f.label&&f.value).slice(0,5);
     const nextEnrichment={...idea.enrichment,category:selected?.name??idea.enrichment.category,facts:cleanFacts,image_url:image,image_fit:imageFit,edited_by_user:true,user_edited_at:new Date().toISOString()};
     const updated:Idea={...idea,title:title.trim(),original_input:note.trim(),summary:summary.trim()||null,tags:tags.slice(0,3),enrichment:nextEnrichment};
-    // Update the instant detail preview before the network round-trip so navigation stays snappy.
     stashIdeaPreview(updated);
     try{
       const s=getSupabaseBrowserClient();
@@ -74,7 +73,7 @@ export default function EditIdeaPage(){
     <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e=>void chooseImage(e.target.files?.[0])}/>
     <header className="sticky top-0 z-20 flex items-center justify-between border-b border-black/5 bg-[#fbfaf7]/95 px-4 py-3 backdrop-blur">
       <Link href={`/ideas/${id}`} aria-label="Abbrechen" className="flex h-9 w-9 items-center justify-center rounded-full bg-white shadow-[0_4px_14px_rgba(0,0,0,.05)]"><X className="h-4 w-4"/></Link>
-      <span className="text-[14px] font-semibold">Erinnerung bearbeiten</span>
+      <span className="text-[14px] font-semibold">Idee bearbeiten</span>
       <button onClick={()=>void save()} disabled={saving||!title.trim()} className="flex h-9 min-w-9 items-center justify-center rounded-full bg-black px-3 text-white disabled:opacity-35">{saving?<LoaderCircle className="h-4 w-4 animate-spin"/>:<Check className="h-4 w-4"/>}</button>
     </header>
 
