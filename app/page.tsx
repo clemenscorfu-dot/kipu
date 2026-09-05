@@ -6,6 +6,7 @@ import {useEffect,useRef,useState} from "react";
 import {useRouter} from "next/navigation";
 import {ensureAnonymousSession,getSupabaseBrowserClient} from "@/lib/supabase-browser";
 import {KipuLogo} from "@/components/kipu-logo";
+import {saveCameraCapture} from "@/lib/camera-capture-store";
 
 const actions=[
   {label:"Text",hint:"Gedanke oder Idee notieren",icon:Pencil,href:"/write",tone:"bg-[#fff7e8] text-[#d99a39]"},
@@ -47,11 +48,18 @@ export default function Home(){
 
   useEffect(()=>{document.body.style.overflow=captureOpen||photoOpen?"hidden":"";return()=>{document.body.style.overflow=""}},[captureOpen,photoOpen]);
 
-  function photoChosen(file?:File){
+  async function photoChosen(file?:File){
     if(!file)return;
-    const reader=new FileReader();
-    reader.onload=()=>{try{sessionStorage.setItem("kipu-camera-capture",String(reader.result??""))}catch{}router.push("/camera?captured=1")};
-    reader.readAsDataURL(file);
+    try{
+      await saveCameraCapture(file);
+      router.push("/camera?captured=1");
+    }catch(e){
+      console.error("Kipu camera capture persist failed",e);
+      router.push("/camera?captureError=1");
+    }finally{
+      if(cameraRef.current)cameraRef.current.value="";
+      if(libraryRef.current)libraryRef.current.value="";
+    }
   }
 
   function choosePhotoSource(source:"camera"|"library"){
@@ -60,8 +68,8 @@ export default function Home(){
   }
 
   return <main className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col overflow-x-hidden bg-[#fbfaf7] text-[#111]">
-    <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>photoChosen(e.target.files?.[0])}/>
-    <input ref={libraryRef} type="file" accept="image/*" className="hidden" onChange={e=>photoChosen(e.target.files?.[0])}/>
+    <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e=>void photoChosen(e.target.files?.[0])}/>
+    <input ref={libraryRef} type="file" accept="image/*" className="hidden" onChange={e=>void photoChosen(e.target.files?.[0])}/>
     <div className="flex flex-1 flex-col px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-4">
       <div className="flex items-start justify-between"><KipuLogo compact/><button aria-label="Einstellungen" className="flex h-9 w-9 items-center justify-center rounded-full border border-[#ebe9e4] bg-white/90 shadow-[0_3px_12px_rgba(0,0,0,.04)]"><Settings className="h-4 w-4"/></button></div>
       <header className="mt-4"><h1 className="max-w-[310px] text-[25px] font-semibold leading-[1.05] tracking-[-0.035em]">Was möchtest du heute festhalten?</h1><div className="mt-4 flex flex-col items-center"><button onClick={()=>setCaptureOpen(true)} aria-label="Neue Erinnerung festhalten" className="relative flex h-[84px] w-[84px] items-center justify-center rounded-full bg-[#74a18f] text-white shadow-[0_12px_28px_rgba(116,161,143,.24)] active:scale-95"><span className="absolute inset-[-6px] rounded-full border border-[#74a18f]/15"/><Plus className="h-10 w-10" strokeWidth={1.7}/></button><button onClick={()=>setCaptureOpen(true)} className="mt-2 text-center text-[11px] font-medium text-black/42">Text, Sprache, Foto oder Datei</button></div></header>
