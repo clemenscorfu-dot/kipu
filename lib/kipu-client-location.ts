@@ -11,12 +11,13 @@ export function getKipuLocation(options:{timeout?:number;highAccuracy?:boolean}=
   const hit=getCachedLocation();if(hit)return Promise.resolve(hit);
   if(pending)return pending;
   if(typeof navigator==="undefined"||!navigator.geolocation)return Promise.resolve({latitude:null,longitude:null});
-  pending=new Promise(resolve=>navigator.geolocation.getCurrentPosition(
+  const request=new Promise<KipuClientLocation>(resolve=>navigator.geolocation.getCurrentPosition(
     p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude}),
     ()=>resolve({latitude:null,longitude:null}),
     {enableHighAccuracy:options.highAccuracy??false,timeout:options.timeout??1500,maximumAge:MAX_AGE}
   )).then(value=>{cached={value,at:Date.now()};return value}).finally(()=>{pending=null});
-  return pending;
+  pending=request;
+  return request;
 }
 
 export function warmKipuLocation(){void getKipuLocation({timeout:1200})}
