@@ -78,14 +78,17 @@ function SwipeIdeaCard({ idea, category, onDelete }: { idea: IdeaRow; category: 
     }
     if (!gesture.current.swiping) return;
 
-    // Light and direct at the start, then progressively more resistance.
+    // Intentionally easy at the start: the card moves a bit farther than the finger.
+    // After that the curve flattens progressively so the delete threshold has clear resistance.
     const drag = Math.max(0, -dx);
     const width = gesture.current.width;
-    const freeTravel = width * 0.14;
-    const resistedDrag = drag <= freeTravel
-      ? drag
-      : freeTravel + (drag - freeTravel) * 0.48;
-    const next = -Math.min(width * 0.42, resistedDrag);
+    const easyTravel = width * 0.1;
+    const easyGain = 1.35;
+    const easyOffset = easyTravel * easyGain;
+    const extraDrag = Math.max(0, drag - easyTravel);
+    const resistedExtra = width * 0.22 * (1 - Math.exp(-extraDrag / (width * 0.2)));
+    const translated = drag <= easyTravel ? drag * easyGain : easyOffset + resistedExtra;
+    const next = -Math.min(width * 0.42, translated);
 
     setOffset(next);
     setArmed(Math.abs(next) >= width * 0.3);
@@ -135,8 +138,8 @@ function SwipeIdeaCard({ idea, category, onDelete }: { idea: IdeaRow; category: 
         onPointerMove={pointerMove}
         onPointerUp={pointerEnd}
         onPointerCancel={pointerEnd}
-        style={{ transform: `translateX(${offset}px)`, touchAction: "pan-y" }}
-        className={`relative transition-[transform,border-color,box-shadow] duration-150 ${armed || confirming ? "rounded-[18px] border border-[#d84a42] shadow-[0_0_0_2px_rgba(216,74,66,.10)]" : "border border-transparent"}`}
+        style={{ transform: `translateX(${offset}px)`, touchAction: "pan-y", transition: offset === 0 ? "transform 150ms ease-out" : "none" }}
+        className={`relative transition-[border-color,box-shadow] duration-150 ${armed || confirming ? "rounded-[18px] border border-[#d84a42] shadow-[0_0_0_2px_rgba(216,74,66,.10)]" : "border border-transparent"}`}
       >
         <Link
           prefetch={false}
