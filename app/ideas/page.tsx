@@ -324,8 +324,8 @@ export default function IdeasPage() {
   }
 
   return (
-    <main className="mx-auto min-h-[100dvh] w-full max-w-[430px] bg-[#fbfaf7] text-[#111]">
-      <header className="px-4 pb-3 pt-4">
+    <main className="mx-auto flex h-[100dvh] w-full max-w-[430px] flex-col overflow-hidden bg-[#fbfaf7] text-[#111]">
+      <header className="shrink-0 bg-[#fbfaf7] px-4 pb-3 pt-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link href="/" aria-label="Zurück" className="flex h-9 w-9 items-center justify-center rounded-full bg-white shadow-[0_4px_14px_rgba(0,0,0,.06)]"><ArrowLeft className="h-4 w-4" /></Link>
@@ -346,11 +346,11 @@ export default function IdeasPage() {
         </label>
       </header>
 
-      <section className="border-t border-[#ecebe7] px-4 py-3">
+      <section className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t border-[#ecebe7] px-4 py-3">
         {loading && <div className="flex justify-center py-16"><LoaderCircle className="animate-spin text-[#79aa36]" /></div>}
         {error && <div className="mb-3 rounded-xl bg-[#fff0ef] p-3 text-xs">{error}</div>}
         {!loading && !error && ideas.length === 0 && <div className="py-16 text-center text-sm text-black/45">Noch keine Ideen gespeichert.</div>}
-        <div className="space-y-2">{visibleIdeas.map((idea) => <SwipeIdeaCard key={idea.id} idea={idea} category={displayCategory(idea.id)} onDelete={deleteIdea} />)}</div>
+        <div className="space-y-2 pb-[max(12px,env(safe-area-inset-bottom))]">{visibleIdeas.map((idea) => <SwipeIdeaCard key={idea.id} idea={idea} category={displayCategory(idea.id)} onDelete={deleteIdea} />)}</div>
       </section>
 
       {filterOpen && (
