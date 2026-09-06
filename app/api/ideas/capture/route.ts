@@ -5,6 +5,7 @@ import { ensureIdeaCategory } from "@/lib/kipu-category-manager";
 import { indexIdeaMemory } from "@/lib/kipu-memory-index";
 import { buildMemoryRelations } from "@/lib/kipu-memory-graph";
 import { ensurePlaceEnrichment } from "@/lib/kipu-place-enrichment";
+import { persistIdeaHeroImage } from "@/lib/kipu-image-storage";
 
 export const maxDuration=300;
 
@@ -18,6 +19,11 @@ async function backgroundEnrich(payload:EnrichIdeaPayload){
   try{
     const result=await enrichPendingIdea(payload);
     const ideaId=result.ideaId;
+    // Copy the selected hero image into our own storage immediately. External image URLs are discovery sources, not durable assets.
+    try{
+      const stored=await persistIdeaHeroImage(s,payload.userId,ideaId);
+      console.info("Kipu image storage",{ideaId,...stored});
+    }catch(e){console.error("Post-enrichment image storage failed",e)}
     // A concrete real-world POI should never remain half-enriched: resolve map coordinates, maps link and public place details.
     try{await ensurePlaceEnrichment(s,payload.userId,openAiKey,ideaId)}catch(e){console.error("Post-enrichment place step failed",e)}
     // Core enrichment must not be invalidated by optional organisation/memory steps.
