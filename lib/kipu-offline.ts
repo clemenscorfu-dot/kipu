@@ -1,0 +1,7 @@
+import{ensureAnonymousSession}from"@/lib/supabase-browser";
+export type OfflineIdea={localId:string;text:string;createdAt:string;status:'queued'|'syncing'|'failed'};
+const KEY='kipu-offline-ideas-v1';
+export function getOfflineIdeas():OfflineIdea[]{if(typeof window==='undefined')return[];try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch{return[]}}
+function save(items:OfflineIdea[]){localStorage.setItem(KEY,JSON.stringify(items));window.dispatchEvent(new Event('kipu-offline-change'))}
+export function queueOfflineIdea(text:string){const item:OfflineIdea={localId:`offline-${Date.now()}-${Math.random().toString(36).slice(2)}`,text,createdAt:new Date().toISOString(),status:'queued'};save([item,...getOfflineIdeas()]);return item}
+export async function flushOfflineIdeas(){if(typeof navigator==='undefined'||!navigator.onLine)return;let items=getOfflineIdeas();for(const item of [...items].reverse()){try{items=getOfflineIdeas().map(x=>x.localId===item.localId?{...x,status:'syncing' as const}:x);save(items);const session=await ensureAnonymousSession();const r=await fetch('/api/ideas/capture',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({text:item.text})});if(!r.ok)throw new Error();items=getOfflineIdeas().filter(x=>x.localId!==item.localId);save(items)}catch{items=getOfflineIdeas().map(x=>x.localId===item.localId?{...x,status:'failed' as const}:x);save(items);break}}}
