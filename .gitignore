@@ -10,3 +10,5 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+evals/results/latest.json
+evals/results/latest.md
