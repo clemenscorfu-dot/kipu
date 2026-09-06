@@ -6,7 +6,9 @@ import{flushOfflinePhotos,getOfflinePhotos,retryOfflinePhotos}from"@/lib/kipu-of
 export function KipuOfflineRuntime(){
   const[online,setOnline]=useState(true),[queued,setQueued]=useState(0),[syncing,setSyncing]=useState(false);
   useEffect(()=>{
-    if('serviceWorker'in navigator)void navigator.serviceWorker.register('/sw.js');
+    if('serviceWorker'in navigator){
+      void navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(reg=>reg.update()).catch(()=>{});
+    }
     const refresh=()=>{setOnline(navigator.onLine);setQueued(getOfflineIdeas().length+getOfflinePhotos().length)};
     const sync=async()=>{refresh();if(!navigator.onLine)return;setSyncing(true);try{await flushOfflineIdeas();await flushOfflinePhotos()}finally{setSyncing(false);refresh()}};
     const changed=()=>refresh();
@@ -16,7 +18,7 @@ export function KipuOfflineRuntime(){
   },[]);
 
   if(online&&queued===0&&!syncing)return null;
-  const label=!online?queued>0?`Offline · ${queued} Idee${queued===1?'':'n'} wartet${queued===1?'':'en'} auf Sync`:'Offline · zuletzt geladene Inhalte verfügbar':syncing?'Kipu synchronisiert…':`${queued} Idee${queued===1?'':'n'} noch nicht synchronisiert`;
+  const label=!online?queued>0?`Offline · ${queued} Idee${queued===1?'':'n'} wartet${queued===1?'':'en'} auf Synchronisation`:'Offline · gespeicherte Inhalte sind verfügbar':syncing?'Kipu synchronisiert…':`${queued} Idee${queued===1?'':'n'} noch nicht synchronisiert`;
   async function retryAll(){setSyncing(true);try{await retryOfflineIdeas();await retryOfflinePhotos()}finally{setSyncing(false);setQueued(getOfflineIdeas().length+getOfflinePhotos().length)}}
-  return <div className="pointer-events-none fixed inset-x-0 top-[max(8px,env(safe-area-inset-top))] z-[100] flex justify-center px-4"><div className="pointer-events-auto flex max-w-[390px] items-center gap-2 rounded-full border border-black/8 bg-[#252525]/92 px-3 py-2 text-[10.5px] font-medium text-white shadow-[0_5px_18px_rgba(0,0,0,.15)] backdrop-blur"><span className={`h-2 w-2 rounded-full ${online?'bg-[#93c95c]':'bg-[#e7b05b]'}`}/><span>{label}</span>{online&&queued>0&&!syncing&&<button onClick={()=>void retryAll()} className="ml-1 underline decoration-white/40 underline-offset-2">Nochmal</button>}</div></div>
+  return <div className="pointer-events-none fixed inset-x-0 top-[max(10px,env(safe-area-inset-top))] z-[100] flex justify-center px-3"><div className="pointer-events-auto flex min-h-10 w-full max-w-[404px] items-center gap-2.5 rounded-[14px] border border-black/15 bg-white px-3.5 py-2.5 text-[12.5px] font-semibold leading-4 text-[#222] shadow-[0_6px_24px_rgba(0,0,0,.16)]"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${online?'bg-[#79aa36]':'bg-[#d58b27]'}`}/><span className="min-w-0 flex-1">{label}</span>{online&&queued>0&&!syncing&&<button onClick={()=>void retryAll()} className="shrink-0 rounded-full bg-[#222] px-2.5 py-1 text-[10.5px] font-semibold text-white">Nochmal</button>}</div></div>
 }
