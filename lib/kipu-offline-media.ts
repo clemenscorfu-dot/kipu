@@ -18,8 +18,8 @@ export async function queueOfflinePhoto(imageDataUrl:string,note:string){
 }
 
 export async function flushOfflinePhotos(){
-  if(typeof navigator==='undefined'||!navigator.onLine)return{synced:0,remaining:getOfflinePhotos().length};
-  let synced=0;const cache=await caches.open(CACHE);
+  if(typeof navigator==='undefined'||!navigator.onLine)return{synced:0,remaining:getOfflinePhotos().length,failed:0};
+  let synced=0,failed=0;const cache=await caches.open(CACHE);
   for(const item of [...getOfflinePhotos()].reverse()){
     try{
       save(getOfflinePhotos().map(x=>x.localId===item.localId?{...x,status:'syncing' as const}:x));
@@ -28,9 +28,15 @@ export async function flushOfflinePhotos(){
       const r=await fetch('/api/ideas/capture',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({text:item.note,imageDataUrl,inputType:'camera'})});
       if(!r.ok)throw new Error(`capture_${r.status}`);
       await cache.delete(mediaRequest(item.localId));save(getOfflinePhotos().filter(x=>x.localId!==item.localId));synced++;
-    }catch{save(getOfflinePhotos().map(x=>x.localId===item.localId?{...x,status:'failed' as const}:x));break}
+    }catch{
+      save(getOfflinePhotos().map(x=>x.localId===item.localId?{...x,status:'failed' as const}:x));
+      failed++;
+      // Keep syncing later photos if just this item failed. Stop only when the device
+      // actually went offline again.
+      if(!navigator.onLine)break;
+    }
   }
-  return{synced,remaining:getOfflinePhotos().length};
+  return{synced,remaining:getOfflinePhotos().length,failed};
 }
 
 export function retryOfflinePhotos(){save(getOfflinePhotos().map(x=>({...x,status:'queued'})));return flushOfflinePhotos()}
