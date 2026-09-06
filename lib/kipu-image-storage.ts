@@ -19,6 +19,39 @@ function decodeDataUrl(value: string) {
   return { bytes, contentType: match[1].toLowerCase() };
 }
 
+async function fetchImageAttempt(value: string, headers: Record<string, string>) {
+  try {
+    const response = await fetch(value, {
+      redirect: "follow",
+      headers,
+      signal: AbortSignal.timeout(15_000),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return { ok: false as const, status: response.status, reason: `http_${response.status}` };
+    }
+    const contentType = (response.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
+    if (!contentType.startsWith("image/")) {
+      return { ok: false as const, status: response.status, reason: `not_image:${contentType || "unknown"}` };
+    }
+    const declared = Number(response.headers.get("content-length") || 0);
+    if (declared > MAX_BYTES) {
+      return { ok: false as const, status: response.status, reason: "too_large_declared" };
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > MAX_BYTES) {
+      return { ok: false as const, status: response.status, reason: "too_large_or_empty" };
+    }
+    return { ok: true as const, bytes, contentType };
+  } catch (error) {
+    return {
+      ok: false as const,
+      status: null,
+      reason: error instanceof Error ? error.message : "fetch_failed",
+    };
+  }
+}
+
 async function downloadImage(value: string) {
   if (value.startsWith("data:image/")) return decodeDataUrl(value);
   let parsed: URL;
@@ -29,22 +62,30 @@ async function downloadImage(value: string) {
   }
   if (!/^https?:$/.test(parsed.protocol)) return null;
 
-  const response = await fetch(value, {
-    redirect: "follow",
-    headers: {
-      "User-Agent": "Mozilla/5.0 KipuImageMirror/1.0",
-      Accept: "image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8",
-    },
-    signal: AbortSignal.timeout(12_000),
+  const browserHeaders = {
+    "User-Agent":
+      "Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+    Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    "Accept-Language": "de-CH,de;q=0.9,en;q=0.7",
+  };
+  const first = await fetchImageAttempt(value, browserHeaders);
+  if (first.ok) return { bytes: first.bytes, contentType: first.contentType };
+
+  // Some CDNs reject bot-like requests but accept a normal browser request with the
+  // image host as referrer. Keep this deliberately generic; we never forward cookies.
+  const second = await fetchImageAttempt(value, {
+    ...browserHeaders,
+    Referer: `${parsed.protocol}//${parsed.host}/`,
+    Origin: `${parsed.protocol}//${parsed.host}`,
   });
-  if (!response.ok) return null;
-  const contentType = (response.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
-  if (!contentType.startsWith("image/")) return null;
-  const declared = Number(response.headers.get("content-length") || 0);
-  if (declared > MAX_BYTES) return null;
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (!bytes.length || bytes.length > MAX_BYTES) return null;
-  return { bytes, contentType };
+  if (second.ok) return { bytes: second.bytes, contentType: second.contentType };
+
+  console.info("Kipu image mirror download failed", {
+    host: parsed.host,
+    first: first.reason,
+    second: second.reason,
+  });
+  return null;
 }
 
 export async function persistIdeaHeroImage(
