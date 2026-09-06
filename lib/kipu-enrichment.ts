@@ -135,7 +135,13 @@ async function callOpenAI(key: string, body: Record<string, unknown>) {
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`openai_${response.status}`);
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = (await response.text()).slice(0, 600);
+    } catch {}
+    throw new Error(`openai_${response.status}${detail ? `:${detail}` : ""}`);
+  }
   return (await response.json()) as AgentResponse;
 }
 
@@ -153,17 +159,16 @@ async function validateImage(url: string | null) {
       redirect: "follow",
       headers: {
         "User-Agent": "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36",
-        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        Accept: "image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8",
       },
       signal: AbortSignal.timeout(6000),
     });
-    const type = (response.headers.get("content-type") || "").toLowerCase();
-    if (response.ok && type.startsWith("image/")) return response.url || url;
-    if (response.ok && type && !type.includes("text/html") && !type.includes("application/json")) return response.url || url;
-    if ([401, 403, 429].includes(response.status)) return url;
-    return null;
+    if (!response.ok) return null;
+    const type = (response.headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
+    if (!["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"].includes(type)) return null;
+    return response.url || url;
   } catch {
-    return url;
+    return null;
   }
 }
 
@@ -184,6 +189,11 @@ function identifiersFromFacts(facts: any[] = []) {
 
 function urlsFrom(text: string) {
   return text.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? [];
+}
+
+function candidateLooksAdministrative(candidate: ImageCandidate) {
+  const haystack = `${candidate.sourceTitle ?? ""} ${candidate.sourceUrl ?? ""}`.toLocaleLowerCase("de-CH");
+  return /\b(team|staff|mitarbeiter|mitarbeitende|vorstand|kommission|committee|about|ueber-uns|über-uns|kontakt|contact|portrait|portraet|logo)\b/.test(haystack);
 }
 
 async function runAgent(
@@ -387,7 +397,7 @@ async function chooseRepresentativeImage(key: string, memory: any, candidates: I
           `Bei konkreten Entitäten muss möglichst genau diese Entität gezeigt werden. ` +
           `Bei Vorhaben oder abstrakteren Ideen wähle ein klar thematisches, nicht irreführendes Motiv. ` +
           `Lehne Gruppenfotos, Portraits, Logos, Funktionäre, Screenshots und generische Organisationsbilder ab, ` +
-          `wenn diese nicht selbst Gegenstand der Idee sind. Wähle null, wenn kein Kandidat ausreichend repräsentativ ist.`,
+          `wenn diese nicht selbst Gegenstand der Idee sind. Wähle null nur dann, wenn wirklich alle Kandidaten thematisch unbrauchbar sind.`,
       },
     ];
     usable.forEach((candidate, index) => {
@@ -419,8 +429,7 @@ async function chooseRepresentativeImage(key: string, memory: any, candidates: I
       !Number.isInteger(index) ||
       index < 0 ||
       index >= usable.length ||
-      choice.confidence === "none" ||
-      choice.confidence === "low"
+      choice.confidence === "none"
     ) {
       return null;
     }
@@ -435,6 +444,19 @@ async function chooseRepresentativeImage(key: string, memory: any, candidates: I
     });
     return null;
   }
+}
+
+async function firstReliableFallback(candidates: ImageCandidate[]) {
+  const preferred = candidates.filter((candidate) => !candidateLooksAdministrative(candidate));
+  const ordered = preferred.length ? preferred : candidates;
+  const seen = new Set<string>();
+  for (const candidate of ordered) {
+    if (!candidate?.url || seen.has(candidate.url)) continue;
+    seen.add(candidate.url);
+    const valid = await validateImage(candidate.url);
+    if (valid) return valid;
+  }
+  return null;
 }
 
 async function representativeImage(
@@ -489,9 +511,50 @@ async function representativeImage(
   const selected = await chooseRepresentativeImage(key, memory, allCandidates);
   if (selected) return selected;
 
+  const thematicQuery = [
+    memory.tags?.join(" "),
+    memory.category,
+    memory.subject_location,
+    "Praxis Aktivität Szene Landschaft repräsentatives Foto ohne Teamfoto ohne Logo",
+  ].filter(Boolean).join(" ");
+  const thematicCandidates: ImageCandidate[] = [];
+  if (thematicQuery) {
+    try {
+      const result: any = await searchImages(thematicQuery, { supabase, userId, openAiKey: key, currentIdeaId });
+      thematicCandidates.push(...((result?.candidates ?? []) as ImageCandidate[]).slice(0, 16));
+    } catch {}
+  }
+
+  const thematicSelected = await chooseRepresentativeImage(key, memory, thematicCandidates);
+  if (thematicSelected) {
+    return {
+      ...thematicSelected,
+      reason: `Thematische Zweitsuche: ${thematicSelected.reason}`,
+    };
+  }
+
+  const reliableThematic = await firstReliableFallback(thematicCandidates);
+  if (reliableThematic) {
+    return {
+      url: reliableThematic,
+      fit: "cover" as const,
+      reason: "Thematischer Bild-Fallback nach Relevanzprüfung",
+    };
+  }
+
+  const reliableOriginal = await firstReliableFallback(allCandidates);
+  if (reliableOriginal) {
+    return {
+      url: reliableOriginal,
+      fit: "cover" as const,
+      reason: "Technisch zuverlässiger Bild-Fallback nach Relevanzprüfung",
+    };
+  }
+
   console.info("Kipu image relevance", {
     ideaId: currentIdeaId,
     candidates: allCandidates.length,
+    thematicCandidates: thematicCandidates.length,
     selected: false,
   });
   return null;
@@ -577,7 +640,7 @@ export async function enrichPendingIdea(payload: EnrichIdeaPayload) {
     console.info("Kipu image final", {
       ideaId: idea.id,
       hasImage: Boolean(hero),
-      imageSource: memory.use_input_image && inputImage ? "input" : hero ? "ranked" : "none",
+      imageSource: memory.use_input_image && inputImage ? "input" : hero ? "ranked_or_fallback" : "none",
       imageReason,
     });
 
@@ -604,7 +667,7 @@ export async function enrichPendingIdea(payload: EnrichIdeaPayload) {
       duplicate_decision_source: duplicate.source,
       possible_duplicate_of: duplicate.confidence === "possible" ? duplicate.ideaId : null,
       agentic: true,
-      toolbox_version: 16,
+      toolbox_version: 17,
       model: "gpt-5.6-luna",
       processing_status: "ready",
       enriched_at: now,
