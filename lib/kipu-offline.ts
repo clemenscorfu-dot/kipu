@@ -32,7 +32,9 @@ export async function flushOfflineIdeas(){
     try{
       save(getOfflineIdeas().map(x=>x.localId===item.localId?{...x,status:'syncing' as const}:x));
       const session=await ensureAnonymousSession();
-      const r=await fetch('/api/ideas/capture',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({text:item.text,inputType:'offline-text'})});
+      // Offline describes transport state, not the persisted input type. The DB constraint
+      // accepts the normal capture types, so a queued text idea must still be stored as text.
+      const r=await fetch('/api/ideas/capture',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({text:item.text,inputType:'text'})});
       if(!r.ok)throw new Error(`capture_${r.status}`);
       save(getOfflineIdeas().filter(x=>x.localId!==item.localId));
       synced++;
