@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { KipuOfflineRuntime } from "@/components/kipu-offline-runtime";
 
 export const metadata: Metadata = {
   title: "Kipu",
@@ -12,17 +13,8 @@ export const metadata: Metadata = {
   },
 };
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  viewportFit: "cover",
-  themeColor: "#f3eee5",
-};
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#f3eee5" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return (
-    <html lang="de">
-      <body>{children}</body>
-    </html>
-  );
+  return <html lang="de"><body><KipuOfflineRuntime />{children}</body></html>;
 }
