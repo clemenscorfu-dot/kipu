@@ -169,6 +169,7 @@ export default function IdeasPage() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState("all");
   const curatorStarted = useRef(false);
+  const imageBackfillStarted = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -179,8 +180,8 @@ export default function IdeasPage() {
         await ensureAnonymousSession();
         const s = getSupabaseBrowserClient();
 
-        // Important: never fetch the whole enrichment JSON here. Older rows can contain
-        // multi-megabyte inline base64 images. That made the collection payload enormous.
+        // Keep the initial collection payload small. Legacy inline base64 images are migrated
+        // to Storage in the background instead of being sent with this query.
         const [i, c, a, imgs] = await Promise.all([
           s.from("ideas").select("id,title,summary,tags,location_label,created_at,category:enrichment->>category,image_fit:enrichment->>image_fit,processing_status:enrichment->>processing_status").order("created_at", { ascending: false }),
           s.from("categories").select("id,parent_id,name,sort_order").order("sort_order").order("name"),
@@ -209,6 +210,21 @@ export default function IdeasPage() {
         setCategories(nextCategories);
         setAssignments(nextAssignments);
         setLoading(false);
+
+        // One-time migration for old inline images. It runs after the list is already visible,
+        // so it cannot slow down opening the collection. When finished, reload just the light data.
+        if (!imageBackfillStarted.current && next.some((x) => !x.image_url)) {
+          imageBackfillStarted.current = true;
+          const session = (await s.auth.getSession()).data.session;
+          if (session?.access_token) {
+            void fetch("/api/images/backfill", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}` } })
+              .then((r) => r.ok ? r.json() : null)
+              .then((result) => {
+                if (active && result?.migrated > 0) timer = setTimeout(load, 250);
+              })
+              .catch(() => {});
+          }
+        }
 
         const ready = next.filter((x) => !["pending", "processing", "merged"].includes(x.processing_status ?? ""));
         const assigned = new Set(nextAssignments.map((x) => x.idea_id));
