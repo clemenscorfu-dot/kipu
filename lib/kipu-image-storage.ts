@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const BUCKET = "idea-images";
 const MAX_BYTES = 8_000_000;
@@ -66,6 +66,15 @@ async function downloadImage(value: string) {
   return null;
 }
 
+function storageClient(fallback: SupabaseClient) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) return fallback;
+  return createClient(url, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 async function writeEnrichment(supabase: SupabaseClient, userId: string, ideaId: string, enrichment: Record<string, any>) {
   const { error } = await supabase.from("ideas").update({ enrichment }).eq("id", ideaId).eq("user_id", userId);
   if (error) throw error;
@@ -87,7 +96,8 @@ export async function persistIdeaHeroImage(supabase: SupabaseClient, userId: str
 
   const ext = extensionForMime(downloaded.contentType);
   const path = `${userId}/${ideaId}/hero.${ext}`;
-  const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, downloaded.bytes, {
+  const writer = storageClient(supabase);
+  const { error: uploadError } = await writer.storage.from(BUCKET).upload(path, downloaded.bytes, {
     contentType: downloaded.contentType,
     upsert: true,
     cacheControl: "31536000",
@@ -95,30 +105,33 @@ export async function persistIdeaHeroImage(supabase: SupabaseClient, userId: str
 
   if (uploadError) {
     const message = `${(uploadError as any)?.message ?? ""} ${(uploadError as any)?.code ?? ""}`.toLowerCase();
-    const bucketMissing = message.includes("bucket not found") || message.includes("nosuchbucket");
-    if (bucketMissing && downloaded.bytes.length <= INLINE_FALLBACK_MAX_BYTES) {
+    const recoverable = message.includes("bucket not found") || message.includes("nosuchbucket") || message.includes("row-level security") || message.includes("accessdenied") || message.includes("403");
+    if (recoverable && downloaded.bytes.length <= INLINE_FALLBACK_MAX_BYTES) {
       const inlineUrl = `data:${downloaded.contentType};base64,${downloaded.bytes.toString("base64")}`;
       await writeEnrichment(supabase, userId, ideaId, {
         ...enrichment,
         image_url: inlineUrl,
         image_source_url: imageUrl,
         image_storage_fallback: "inline_data_url",
+        image_storage_error: message.slice(0, 180),
         image_stored_at: new Date().toISOString(),
       });
-      return { stored: true, url: "inline-data-url", reason: "bucket_missing_inline_fallback" };
+      return { stored: true, url: "inline-data-url", reason: "storage_blocked_inline_fallback" };
     }
     throw uploadError;
   }
 
-  const { data: publicData } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  const { data: publicData } = writer.storage.from(BUCKET).getPublicUrl(path);
   const stableUrl = publicData.publicUrl;
   await writeEnrichment(supabase, userId, ideaId, {
     ...enrichment,
     image_url: stableUrl,
     image_storage_path: path,
     image_source_url: imageUrl.startsWith("data:image/") ? null : imageUrl,
+    image_storage_fallback: null,
+    image_storage_error: null,
     image_stored_at: new Date().toISOString(),
   });
 
-  return { stored: true, url: stableUrl, path };
+  return { stored: true, url: stableUrl, path, via: writer === supabase ? "user" : "service_role" };
 }
