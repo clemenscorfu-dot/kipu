@@ -5,6 +5,7 @@ import { ensureIdeaCategory } from "@/lib/kipu-category-manager";
 import { indexIdeaMemory } from "@/lib/kipu-memory-index";
 import { buildMemoryRelations } from "@/lib/kipu-memory-graph";
 import { ensurePlaceEnrichment } from "@/lib/kipu-place-enrichment";
+import { curateIdeaHeroImage } from "@/lib/kipu-image-curation";
 import { persistIdeaHeroImage } from "@/lib/kipu-image-storage";
 
 export const maxDuration=300;
@@ -19,6 +20,11 @@ async function backgroundEnrich(payload:EnrichIdeaPayload){
   try{
     const result=await enrichPendingIdea(payload);
     const ideaId=result.ideaId;
+    // Curate the hero for memorability, not just factual relevance. Concrete entities stay exact; broader ideas may use an attractive representative scene.
+    try{
+      const curated=await curateIdeaHeroImage(s,payload.userId,openAiKey,ideaId);
+      console.info("Kipu image curation",{ideaId,...curated});
+    }catch(e){console.error("Post-enrichment image curation failed",e)}
     // Copy the selected hero image into our own storage immediately. External image URLs are discovery sources, not durable assets.
     try{
       const stored=await persistIdeaHeroImage(s,payload.userId,ideaId);
