@@ -20,13 +20,24 @@ const visualQuerySchema = {
   additionalProperties: false,
   properties: {
     mode: { type: "string", enum: ["exact_entity", "representative"] },
+    people_policy: { type: "string", enum: ["avoid", "allow", "prefer", "required"] },
     queries: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 4 },
+    preferred_subjects: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 5 },
+    avoid_subjects: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 8 },
     visual_goal: { type: "string" },
   },
-  required: ["mode", "queries", "visual_goal"],
+  required: ["mode", "people_policy", "queries", "preferred_subjects", "avoid_subjects", "visual_goal"],
 };
 
 type Candidate = { url: string; sourceUrl?: string; sourceTitle?: string };
+type VisualPlan = {
+  mode: "exact_entity" | "representative";
+  people_policy: "avoid" | "allow" | "prefer" | "required";
+  queries: string[];
+  preferred_subjects: string[];
+  avoid_subjects: string[];
+  visual_goal: string;
+};
 
 function responseText(payload: any) {
   if (typeof payload?.output_text === "string" && payload.output_text.trim()) return payload.output_text;
@@ -80,13 +91,15 @@ async function createVisualQueries(openAiKey: string, context: Record<string, un
           content: [{
             type: "input_text",
             text:
-              `Erzeuge 2 bis 4 kurze Bildsuchanfragen für das Hero-Bild einer persönlichen Ideen-App.\n\n` +
+              `Erzeuge die Bildstrategie für das Hero-Bild einer persönlichen Ideen-App.\n\n` +
               `Idee: ${JSON.stringify(context)}\n\n` +
               `Entscheide zuerst: Ist eine konkrete Entität gespeichert (z.B. bestimmtes Buch, Restaurant, Produkt, Hotel, Person)? Dann mode=exact_entity und die Suchanfragen müssen genau diese Entität zeigen. ` +
-              `Oder ist es ein Vorhaben, Interesse oder allgemeiner Wunsch? Dann mode=representative und suche nach der emotionalen, attraktiven Essenz der Idee: ein schönes, charakteristisches Motiv, das Lust darauf macht und sofort erinnert. ` +
+              `Oder ist es ein Vorhaben, Interesse oder allgemeiner Wunsch? Dann mode=representative und suche nach der emotionalen, attraktiven Essenz der Idee. ` +
+              `Bei representative gilt standardmässig: anonyme Personen vermeiden, wenn Menschen nicht selbst Kern der Idee sind. Ein zufälliger Mensch, Freizeitkleidung, Selfie-/Schnappschusscharakter oder unästhetische Actionaufnahme ist fast nie ein gutes Hero-Bild. ` +
+              `Bevorzuge klare Hauptmotive, gute Komposition, schöne Natur, charakteristische Objekte, Tiere, Landschaft oder Atmosphäre. ` +
               `Keine Verwaltungsbilder, Teams, Logos, Gebäude ohne Aussage, Screenshots, Formulare oder Kursorganisation. ` +
-              `Bei Natur-/Outdoor-Ideen dürfen Tiere, Landschaft, Aktivität oder Atmosphäre das Thema repräsentieren. ` +
-              `Ort nur einbauen, wenn er visuell sinnvoll ist. Suchanfragen dürfen Deutsch oder Englisch sein; bevorzuge Begriffe, die gute Fototreffer liefern.`,
+              `Gib people_policy passend an: avoid wenn Menschen eher stören, allow wenn sie okay aber nicht nötig sind, prefer/required nur wenn menschliche Aktivität wirklich zentral ist. ` +
+              `Die Suchanfragen müssen die preferred_subjects gezielt fördern und avoid_subjects vermeiden.`,
           }],
         }],
         text: { format: { type: "json_schema", name: "kipu_visual_queries", strict: true, schema: visualQuerySchema } },
@@ -95,7 +108,7 @@ async function createVisualQueries(openAiKey: string, context: Record<string, un
     if (!response.ok) return null;
     const raw = responseText(await response.json());
     if (!raw) return null;
-    return JSON.parse(raw) as { mode: "exact_entity" | "representative"; queries: string[]; visual_goal: string };
+    return JSON.parse(raw) as VisualPlan;
   } catch {
     return null;
   }
@@ -131,7 +144,10 @@ export async function curateIdeaHeroImage(
 
   const visualPlan = await createVisualQueries(openAiKey, context);
   const candidates: Candidate[] = [];
-  if (typeof enrichment.image_url === "string" && enrichment.image_url) {
+
+  // Exact entities may keep the agent's original entity-specific image candidate.
+  // Representative ideas deliberately start fresh so a merely factual/administrative image does not anchor the curation.
+  if (visualPlan?.mode === "exact_entity" && typeof enrichment.image_url === "string" && enrichment.image_url) {
     candidates.push({ url: enrichment.image_url, sourceTitle: "Bisherige Auswahl" });
   }
 
@@ -169,22 +185,21 @@ export async function curateIdeaHeroImage(
       text:
         `Du kuratierst das Hero-Bild für eine persönliche Ideen-App.\n\n` +
         `Idee: ${JSON.stringify(context)}\n` +
-        `Bildstrategie: ${JSON.stringify(visualPlan ?? { mode: "unknown", visual_goal: "passend und erinnerungsstark" })}\n\n` +
-        `Wähle das Bild mit dem höchsten Erinnerungswert, nicht einfach das sachlich korrekteste Dokumentationsbild. ` +
-        `Bewerte in dieser Reihenfolge: (1) Identität: Bei einer konkreten Entität muss die konkrete Sache korrekt gezeigt werden. ` +
-        `(2) Relevanz: Das Motiv muss eindeutig zur Idee passen. ` +
-        `(3) Attraktivität und emotionale Essenz: Bevorzuge schöne, charakteristische, atmosphärische Bilder, die zeigen, warum die Idee reizvoll ist. ` +
-        `Für Vorhaben und Interessen ist das Erlebnisversprechen wichtiger als administrative Realität: Natur statt Parkplatz, Atmosphäre statt Gebäudefassade, Erlebnis statt Kursorganisation. ` +
-        `Vermeide Gruppenfotos, Sitzungs-/Kursräume, Logos, Funktionäre, Screenshots, Hinweistafeln, Formulare und rein technische Infrastruktur, sofern genau diese nicht Kern der Idee sind. ` +
-        `Bei Outdoor-/Naturthemen muss das zentrale Motiv auf dem Handy sofort erkennbar sein; ein weit entferntes kleines Detail in viel leerer Landschaft reicht nicht. ` +
-        `Ein Bild darf symbolisch-repräsentativ sein, wenn keine konkrete Entität abgebildet werden muss, darf aber nichts Falsches über einen konkreten Anbieter oder Ort behaupten. ` +
-        `Wähle null nur, wenn wirklich kein Kandidat sowohl passend als auch visuell brauchbar ist.`,
+        `Bildstrategie: ${JSON.stringify(visualPlan ?? { mode: "unknown", people_policy: "avoid", visual_goal: "passend und erinnerungsstark" })}\n\n` +
+        `Wähle das Bild mit dem höchsten Erinnerungswert. Prüfe jedes Bild tatsächlich visuell und beschreibe intern zuerst, was gross und dominant zu sehen ist. ` +
+        `Bewerte danach in dieser Reihenfolge: (1) Identität bei konkreten Entitäten, (2) eindeutige Relevanz, (3) ästhetische Qualität und emotionale Essenz. ` +
+        `Bei representative-Ideen gilt: Wenn people_policy=avoid, darf kein Bild gewinnen, auf dem eine anonyme Person das dominante Hauptmotiv ist. Wenn people_policy=allow, darf eine Person nur gewinnen, wenn Bildästhetik und Handlung klar hochwertiger sind als Tier/Landschaft/Objekt-Alternativen. ` +
+        `Casual-Schnappschüsse, Freizeitkleidung als dominantes Motiv, ungünstige Körperhaltung, Amateur-/Stock-Schnappschusswirkung, Rückenansichten ohne starken Kontext oder technisch korrekte aber hässliche Szenen stark abwerten. ` +
+        `Bevorzuge die preferred_subjects: ${(visualPlan?.preferred_subjects ?? []).join(", ") || "charakteristisches Hauptmotiv"}. ` +
+        `Vermeide insbesondere: ${(visualPlan?.avoid_subjects ?? []).join(", ") || "Verwaltungsbilder, Teams, Logos, Screenshots"}. ` +
+        `Für Vorhaben und Interessen ist das Erlebnisversprechen wichtiger als administrative Realität. Das Bild soll auf einem Handy sofort schön, klar und merkfähig wirken. ` +
+        `Wähle null, wenn kein Kandidat diese Qualitätslatte erreicht; ein schlechtes Bild ist schlechter als vorübergehend kein kuratiertes Bild.`,
     },
   ];
 
   usable.forEach((candidate, index) => {
     content.push({ type: "input_text", text: `Kandidat ${index}: ${candidate.sourceTitle ?? candidate.sourceUrl ?? "Quelle unbekannt"}` });
-    content.push({ type: "input_image", image_url: candidate.dataUrl, detail: "low" });
+    content.push({ type: "input_image", image_url: candidate.dataUrl, detail: "high" });
   });
 
   try {
@@ -202,8 +217,8 @@ export async function curateIdeaHeroImage(
     if (!raw) return { changed: false, reason: "curation_no_output", visualPlan };
     const choice = JSON.parse(raw) as { selected_index: number | null; confidence: string; reason: string };
     const index = choice.selected_index;
-    if (index == null || index < 0 || index >= usable.length || choice.confidence === "none") {
-      return { changed: false, reason: "curation_no_selection", visualPlan };
+    if (index == null || index < 0 || index >= usable.length || choice.confidence === "none" || choice.confidence === "low") {
+      return { changed: false, reason: "curation_no_quality_selection", visualPlan, confidence: choice.confidence };
     }
 
     const selected = usable[index];
@@ -216,8 +231,9 @@ export async function curateIdeaHeroImage(
       image_url: selected.url,
       image_fit: "cover",
       image_reason: `Kuratierte Auswahl (${choice.confidence}): ${choice.reason}`,
-      image_curation_version: 2,
+      image_curation_version: 3,
       image_visual_mode: visualPlan?.mode ?? null,
+      image_people_policy: visualPlan?.people_policy ?? null,
       image_visual_goal: visualPlan?.visual_goal ?? null,
     };
     const { error: updateError } = await supabase
