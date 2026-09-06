@@ -2,24 +2,30 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 
-type GoldenCase={id:string;area:string;input:string;expect:Record<string,unknown>;priority:"P0"|"P1"|"P2";setup?:string};
+type GoldenCase={id:string;area:string;eval_type:"capture"|"search"|"rediscover"|"contract"|"manual";input:string;expect:Record<string,unknown>;priority:"P0"|"P1"|"P2";setup?:string};
 const cases=JSON.parse(readFileSync(new URL("../evals/golden-cases.json",import.meta.url),"utf8")) as GoldenCase[];
 
 test("golden eval corpus is valid and unique",()=>{
-  assert.ok(cases.length>=15,"MVP corpus should cover at least 15 core cases");
+  assert.ok(cases.length>=40,"MVP corpus should cover at least 40 core cases");
   const ids=new Set<string>();
   for(const c of cases){
     assert.ok(c.id&&c.area&&c.input,"every case needs id, area and input");
     assert.ok(Object.keys(c.expect??{}).length>0,`${c.id} needs explicit expectations`);
     assert.ok(["P0","P1","P2"].includes(c.priority),`${c.id} has invalid priority`);
+    assert.ok(["capture","search","rediscover","contract","manual"].includes(c.eval_type),`${c.id} has invalid eval_type`);
     assert.ok(!ids.has(c.id),`duplicate golden-case id: ${c.id}`);ids.add(c.id);
   }
 });
 
 test("P0 corpus covers the complete MVP loop",()=>{
   const p0=new Set(cases.filter(c=>c.priority==="P0").map(c=>c.area));
-  for(const area of ["place","entity","memory","duplicate","link","safety","reliability","rediscover","search","ui"])
+  for(const area of ["capture","place","entity","memory","duplicate","link","safety","reliability","rediscover","search","ui"])
     assert.ok(p0.has(area),`missing P0 coverage for ${area}`);
+});
+
+test("live capture corpus is large enough to expose regressions",()=>{
+  const live=cases.filter(c=>c.eval_type==="capture"&&c.priority==="P0");
+  assert.ok(live.length>=20,`expected >=20 P0 live capture cases, got ${live.length}`);
 });
 
 test("Muttseehütte regression coordinates stay pinned to the real subject",()=>{
