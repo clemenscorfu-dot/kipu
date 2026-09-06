@@ -25,8 +25,8 @@ export function retryOfflineIdeas(){
 }
 
 export async function flushOfflineIdeas(){
-  if(typeof navigator==='undefined'||!navigator.onLine)return{synced:0,remaining:getOfflineIdeas().length};
-  let synced=0;
+  if(typeof navigator==='undefined'||!navigator.onLine)return{synced:0,remaining:getOfflineIdeas().length,failed:0};
+  let synced=0,failed=0;
   const snapshot=[...getOfflineIdeas()].reverse();
   for(const item of snapshot){
     try{
@@ -40,10 +40,13 @@ export async function flushOfflineIdeas(){
       synced++;
     }catch{
       save(getOfflineIdeas().map(x=>x.localId===item.localId?{...x,status:'failed' as const}:x));
-      break;
+      failed++;
+      // A failed item must never block later queued ideas. Only stop when connectivity
+      // itself has disappeared; otherwise continue with the remaining queue.
+      if(!navigator.onLine)break;
     }
   }
   const remaining=getOfflineIdeas().length;
-  window.dispatchEvent(new CustomEvent('kipu-offline-synced',{detail:{synced,remaining}}));
-  return{synced,remaining};
+  window.dispatchEvent(new CustomEvent('kipu-offline-synced',{detail:{synced,remaining,failed}}));
+  return{synced,remaining,failed};
 }
