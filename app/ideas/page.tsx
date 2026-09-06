@@ -77,9 +77,18 @@ function SwipeIdeaCard({ idea, category, onDelete }: { idea: IdeaRow; category: 
       e.currentTarget.setPointerCapture?.(e.pointerId);
     }
     if (!gesture.current.swiping) return;
-    const next = Math.max(-gesture.current.width * 0.42, Math.min(0, dx));
+
+    // Light and direct at the start, then progressively more resistance.
+    const drag = Math.max(0, -dx);
+    const width = gesture.current.width;
+    const freeTravel = width * 0.14;
+    const resistedDrag = drag <= freeTravel
+      ? drag
+      : freeTravel + (drag - freeTravel) * 0.48;
+    const next = -Math.min(width * 0.42, resistedDrag);
+
     setOffset(next);
-    setArmed(Math.abs(next) >= gesture.current.width * 0.3);
+    setArmed(Math.abs(next) >= width * 0.3);
   }
 
   function pointerEnd(e: React.PointerEvent<HTMLDivElement>) {
