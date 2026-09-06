@@ -1,0 +1,17 @@
+[
+  {"id":"place-muttseehuette","area":"place","input":"Muttseehütte mal mit Kindern","expect":{"entity":"Muttseehütte SAC","latitude":46.8575,"longitude":9.01875,"coordinate_tolerance_km":1.0,"must_preserve_intent":true},"priority":"P0"},
+  {"id":"place-restaurant-specific","area":"place","input":"3Men's Kebab in Rüti","expect":{"entity_type":"restaurant","must_have_subject_coordinates":true,"must_not_use_capture_coordinates_as_subject":true},"priority":"P0"},
+  {"id":"place-ambiguous","area":"place","input":"coole Hütte für später","expect":{"must_not_invent_specific_place":true},"priority":"P0"},
+  {"id":"book-one-percent","area":"entity","input":"Buch 1% methode","expect":{"title_contains":["1%-Methode"],"author":"James Clear","entity_type":"book"},"priority":"P0"},
+  {"id":"personal-note","area":"memory","input":"Simone meinte, wir sollten das im Herbst nochmals anschauen","expect":{"must_preserve_personal_context":true,"must_not_invent_web_facts":true},"priority":"P0"},
+  {"id":"open-intent-read","area":"memory","input":"Positiv führen – Stärken erkennen und nutzen lesen","expect":{"intent":"read","must_be_rediscoverable":true},"priority":"P0"},
+  {"id":"duplicate-book","area":"duplicate","input":"Die 1 Prozent Methode von James Clear merken","setup":"existing idea: Die 1%-Methode – James Clear","expect":{"duplicate_confidence":"high"},"priority":"P0"},
+  {"id":"same-chain-different-branch","area":"duplicate","input":"Restaurant einer Kette in Zürich","setup":"existing idea: gleiche Kette, Filiale Bern","expect":{"duplicate_confidence":"none"},"priority":"P0"},
+  {"id":"spotify-audiobook","area":"link","input":"Spotify-Link zu einem Hörbuch","expect":{"must_identify_link_subject_when_public_metadata_available":true,"must_not_fallback_to_unrelated_entity":true},"priority":"P0"},
+  {"id":"unknown-entity","area":"safety","input":"Xqztr Blorpf für später merken","expect":{"must_preserve_original_input":true,"must_not_fabricate_identity":true},"priority":"P0"},
+  {"id":"capture-survives-enrichment-failure","area":"reliability","input":"beliebige Idee bei simuliertem Enrichment-Fehler","expect":{"original_must_be_saved":true,"enrichment_failure_must_not_delete_capture":true},"priority":"P0"},
+  {"id":"rediscover-rotation","area":"rediscover","input":"same eligible memory repeatedly","expect":{"must_not_repeat_within_hours":72,"history_size":6},"priority":"P0"},
+  {"id":"search-fuzzy-memory","area":"search","input":"Wie hiess das Buch mit den kleinen Gewohnheiten?","setup":"existing idea: Die 1%-Methode – James Clear","expect":{"top_results_contains_existing_idea":true},"priority":"P0"},
+  {"id":"nearby-map-pin","area":"ui","input":"tap saved-place pin","expect":{"selected_pin_centered":true,"target_zoom_min":14,"must_not_jump_to_user_location":true},"priority":"P0"},
+  {"id":"nearby-locate","area":"ui","input":"tap blue locate crosshair","expect":{"must_center_user_location":true,"target_zoom":14},"priority":"P0"}
+]
