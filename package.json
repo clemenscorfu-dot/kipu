@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "npm test && next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "eval:live": "node --experimental-strip-types evals/run-live.ts",
+    "eval:place": "node --experimental-strip-types evals/run-live.ts --area place",
+    "eval:p0": "node --experimental-strip-types evals/run-live.ts --priority P0 --all"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
