@@ -1,53 +1,42 @@
 "use client";
 
 import Link from "next/link";
-import {ArrowLeft,CheckCircle2,FlaskConical,LoaderCircle,Play,Trash2,XCircle} from "lucide-react";
-import {useMemo,useState} from "react";
-import goldenCasesJson from "@/evals/golden-cases.json";
-import {ensureAnonymousSession,getSupabaseBrowserClient} from "@/lib/supabase-browser";
+import {ArrowLeft,CheckCircle2,FlaskConical,LoaderCircle,Play,RefreshCw,XCircle} from "lucide-react";
+import {useCallback,useEffect,useMemo,useState} from "react";
+import goldenCases from "@/evals/golden-cases.json";
+import {ensureAnonymousSession} from "@/lib/supabase-browser";
 
-type EvalCase={id:string;area:string;eval_type:string;input:string;capture_location?:{latitude:number;longitude:number};expect:Record<string,unknown>;priority:"P0"|"P1"|"P2"};
+type EvalCase={id:string;area:string;eval_type:string;input:string;priority:"P0"|"P1"|"P2"};
 type Assertion={name:string;pass:boolean;actual?:unknown;expected?:unknown};
 type EvalResult={id:string;area:string;status:"pass"|"fail"|"error";duration_ms:number;assertions:Assertion[];error?:string};
-type IdeaRow={original_input?:string|null;title?:string|null;summary?:string|null;location_label?:string|null;tags?:unknown;people?:unknown;enrichment?:Record<string,any>|null};
-
-const goldenCases=goldenCasesJson as unknown as EvalCase[];
-const TRACK_KEY="kipu-eval-created-ideas";
-function distanceKm(a:number,b:number,c:number,d:number){const r=6371,rad=(x:number)=>x*Math.PI/180,dp=rad(c-a),dl=rad(d-b),q=Math.sin(dp/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(dl/2)**2;return 2*r*Math.atan2(Math.sqrt(q),Math.sqrt(1-q))}
-function allText(row:IdeaRow){return JSON.stringify({title:row.title,summary:row.summary,location_label:row.location_label,tags:row.tags,people:row.people,enrichment:row.enrichment}).toLowerCase()}
-function add(a:Assertion[],name:string,pass:boolean,actual?:unknown,expected?:unknown){a.push({name,pass,actual,expected})}
-function scoreCapture(c:EvalCase,row:IdeaRow){const e=c.expect,a:Assertion[]=[],text=allText(row),enrichment=row.enrichment??{},coords=enrichment.subject_coordinates,links=Array.isArray(enrichment.useful_links)?enrichment.useful_links:[],intent=String(enrichment.memory?.intent??"").toLowerCase();
-  if(e.must_preserve_original)add(a,"Original erhalten",row.original_input===c.input,row.original_input,c.input);
-  if(Array.isArray(e.title_contains))for(const q of e.title_contains)add(a,`Titel enthält „${String(q)}“`,String(row.title??"").toLowerCase().includes(String(q).toLowerCase()),row.title,q);
-  if(Array.isArray(e.text_contains_any))add(a,"Erwartete Information erkannt",e.text_contains_any.some(q=>text.includes(String(q).toLowerCase())),e.text_contains_any.filter(q=>text.includes(String(q).toLowerCase())),e.text_contains_any);
-  if(Array.isArray(e.intent_contains_any))add(a,"Absicht erkannt",e.intent_contains_any.some(q=>intent.includes(String(q).toLowerCase())),intent,e.intent_contains_any);
-  if(e.must_have_subject_coordinates)add(a,"Ort hat Koordinaten",Number.isFinite(coords?.latitude)&&Number.isFinite(coords?.longitude),coords,true);
-  if(e.must_not_have_subject_coordinates)add(a,"Kein Ort erfunden",!(Number.isFinite(coords?.latitude)&&Number.isFinite(coords?.longitude)),coords,null);
-  if(Number.isFinite(e.latitude)&&Number.isFinite(e.longitude)){const km=Number.isFinite(coords?.latitude)&&Number.isFinite(coords?.longitude)?distanceKm(Number(e.latitude),Number(e.longitude),coords.latitude,coords.longitude):Infinity;add(a,"Koordinaten korrekt",km<=Number(e.coordinate_tolerance_km??1),Number.isFinite(km)?Math.round(km*100)/100:"keine",`≤ ${String(e.coordinate_tolerance_km??1)} km`)}
-  if(Number.isFinite(e.subject_must_differ_from_capture_km)&&c.capture_location){const km=Number.isFinite(coords?.latitude)&&Number.isFinite(coords?.longitude)?distanceKm(c.capture_location.latitude,c.capture_location.longitude,coords.latitude,coords.longitude):0;add(a,"Zielort ≠ Aufnahmeort",km>=Number(e.subject_must_differ_from_capture_km),Math.round(km*10)/10,`≥ ${String(e.subject_must_differ_from_capture_km)} km`)}
-  if(Number.isFinite(e.max_useful_links))add(a,"Keine erfundenen Links",links.length<=Number(e.max_useful_links),links.length,e.max_useful_links);
-  add(a,"Pipeline abgeschlossen",["ready","failed"].includes(String(enrichment.processing_status)),enrichment.processing_status,"ready|failed");
-  return a;
-}
-function readTracked(){try{return JSON.parse(localStorage.getItem(TRACK_KEY)||"[]") as string[]}catch{return[]}}
-function rememberId(id:string){localStorage.setItem(TRACK_KEY,JSON.stringify(Array.from(new Set([...readTracked(),id]))))}
-function forgetId(id:string){localStorage.setItem(TRACK_KEY,JSON.stringify(readTracked().filter(x=>x!==id)))}
+type EvalRun={status:"queued"|"running"|"completed"|"failed";created_at:string;started_at?:string;finished_at?:string;total:number;completed:number;passed:number;failed:number;pass_rate:number;current?:string;results:EvalResult[];error?:string};
 
 export default function EvalPage(){
-  const[running,setRunning]=useState(false),[current,setCurrent]=useState(""),[results,setResults]=useState<EvalResult[]>([]),[cleanupMessage,setCleanupMessage]=useState("");
-  const runnable=useMemo(()=>goldenCases.filter(c=>c.eval_type==="capture"&&c.priority==="P0"),[]);
-  const passed=results.filter(r=>r.status==="pass").length,failed=results.filter(r=>r.status!=="pass").length,rate=results.length?Math.round(passed/results.length*100):0;
+  const [runId,setRunId]=useState(""),[run,setRun]=useState<EvalRun|null>(null),[busy,setBusy]=useState(true),[error,setError]=useState("");
+  const runnable=useMemo(()=>(goldenCases as EvalCase[]).filter(c=>c.eval_type==="capture"&&c.priority==="P0"),[]);
+  const active=run?.status==="queued"||run?.status==="running";
 
-  async function waitForIdea(id:string,timeout=120000):Promise<IdeaRow|null>{const s=getSupabaseBrowserClient(),start=Date.now();let last:IdeaRow|null=null;while(Date.now()-start<timeout){const{data,error}=await s.from("ideas").select("*").eq("id",id).maybeSingle();if(error)throw error;const row=(data??null) as IdeaRow|null;if(row)last=row;const st=row?.enrichment?.processing_status;if(st==="ready"||st==="failed")return row;await new Promise(r=>setTimeout(r,1800))}return last}
-  async function cleanupOne(id:string){try{await getSupabaseBrowserClient().from("ideas").delete().eq("id",id);forgetId(id)}catch{}}
-  async function runCase(c:EvalCase):Promise<EvalResult>{const started=Date.now();let ideaId="";try{const session=await ensureAnonymousSession(),r=await fetch("/api/ideas/capture",{method:"POST",headers:{Authorization:`Bearer ${session.access_token}`,"Content-Type":"application/json"},body:JSON.stringify({text:c.input,inputType:"text",latitude:c.capture_location?.latitude??null,longitude:c.capture_location?.longitude??null})}),d=await r.json();if(!r.ok||!d.idea?.id)throw new Error(`Capture ${r.status}: ${d.error??"unbekannter Fehler"}`);ideaId=String(d.idea.id);rememberId(ideaId);const row=await waitForIdea(ideaId);if(!row)throw new Error("Timeout: Idee nicht mehr auffindbar");const assertions=scoreCapture(c,row);return{id:c.id,area:c.area,status:assertions.every(x=>x.pass)?"pass":"fail",duration_ms:Date.now()-started,assertions}}catch(e){return{id:c.id,area:c.area,status:"error",duration_ms:Date.now()-started,assertions:[],error:e instanceof Error?e.message:String(e)}}finally{if(ideaId)await cleanupOne(ideaId)}}
-  async function runAll(){if(running)return;setRunning(true);setResults([]);setCleanupMessage("");const out:EvalResult[]=[];for(const c of runnable){setCurrent(c.id);const result=await runCase(c);out.push(result);setResults([...out])}setCurrent("");setRunning(false)}
-  async function cleanupLeftovers(){setCleanupMessage("Räume auf …");try{await ensureAnonymousSession();const ids=readTracked();for(const id of ids)await cleanupOne(id);localStorage.removeItem(TRACK_KEY);setCleanupMessage(ids.length?`${ids.length} Eval-Ideen entfernt.`:"Keine übrig gebliebenen Eval-Ideen gefunden.")}catch(e){setCleanupMessage(e instanceof Error?e.message:"Aufräumen fehlgeschlagen")}}
+  const request=useCallback(async(method:"GET"|"POST",id?:string)=>{const session=await ensureAnonymousSession(),url=id?`/api/eval/run?id=${encodeURIComponent(id)}`:"/api/eval/run",r=await fetch(url,{method,headers:{Authorization:`Bearer ${session.access_token}`,"Content-Type":"application/json"}}),d=await r.json();if(!r.ok)throw new Error(d.error??`Eval ${r.status}`);return d},[]);
+  const refresh=useCallback(async(id?:string)=>{try{setError("");const d=await request("GET",id||runId||undefined);if(d.run_id)setRunId(String(d.run_id));setRun(d.run??null)}catch(e){setError(e instanceof Error?e.message:"Status konnte nicht geladen werden")}finally{setBusy(false)}},[request,runId]);
 
+  useEffect(()=>{void refresh()},[refresh]);
+  useEffect(()=>{if(!active)return;const t=setInterval(()=>void refresh(runId),3000);return()=>clearInterval(t)},[active,refresh,runId]);
+
+  async function start(){if(active)return;setBusy(true);setError("");try{const d=await request("POST");setRunId(String(d.run_id));setRun(d.run)}catch(e){setError(e instanceof Error?e.message:"Eval konnte nicht gestartet werden")}finally{setBusy(false)}}
+
+  const results=run?.results??[],passed=run?.passed??0,failed=run?.failed??0,rate=run?.pass_rate??0;
   return <main className="mx-auto min-h-screen w-full max-w-[680px] bg-[#fbfaf7] px-4 pb-12 pt-4 text-[#111]">
     <div className="flex items-center gap-3"><Link href="/" className="flex h-9 w-9 items-center justify-center rounded-full bg-white shadow-[0_4px_14px_rgba(0,0,0,.06)]" aria-label="Zurück"><ArrowLeft className="h-4 w-4"/></Link><div><p className="text-[11px] font-semibold uppercase tracking-[.14em] text-[#74a18f]">Intern</p><h1 className="text-[22px] font-semibold tracking-[-.025em]">Kipu MVP Eval</h1></div></div>
-    <section className="mt-5 rounded-[22px] border border-[#e7e6e1] bg-white p-4 shadow-[0_6px_20px_rgba(0,0,0,.04)]"><div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-[#e8f2ed] text-[#74a18f]"><FlaskConical className="h-5 w-5"/></span><div><h2 className="text-[15px] font-semibold">Live gegen die echte Kipu-Pipeline</h2><p className="mt-1 text-[11px] leading-4 text-black/50">Der Test nutzt deinen aktuellen Kipu-Account. Jede Testidee wird angelegt, verarbeitet, bewertet und danach automatisch wieder gelöscht.</p></div></div><div className="mt-4 flex gap-2"><button disabled={running} onClick={()=>void runAll()} className="flex flex-1 items-center justify-center gap-2 rounded-[14px] bg-[#74a18f] px-4 py-3 text-[12px] font-semibold text-white disabled:opacity-50">{running?<LoaderCircle className="h-4 w-4 animate-spin"/>:<Play className="h-4 w-4"/>}{running?`Läuft: ${current}`:`P0 Live-Eval starten (${runnable.length})`}</button><button disabled={running} onClick={()=>void cleanupLeftovers()} aria-label="Eval-Reste löschen" className="flex h-11 w-11 items-center justify-center rounded-[14px] border border-[#e7e6e1] bg-white text-black/45 disabled:opacity-40"><Trash2 className="h-4 w-4"/></button></div>{cleanupMessage&&<p className="mt-2 text-[10px] text-black/45">{cleanupMessage}</p>}</section>
-    {(running||results.length>0)&&<section className="mt-4 rounded-[22px] border border-[#e7e6e1] bg-white p-4"><div className="flex items-end justify-between"><div><p className="text-[11px] text-black/45">Gesamtergebnis</p><p className="mt-0.5 text-[28px] font-semibold tracking-[-.04em]">{results.length?`${rate}%`:"…"}</p></div><p className="text-[11px] font-medium text-black/50">{passed} bestanden · {failed} nicht bestanden · {results.length}/{runnable.length}</p></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-[#ecebe7]"><div className="h-full bg-[#74a18f] transition-all" style={{width:`${results.length?rate:0}%`}}/></div></section>}
+
+    <section className="mt-5 rounded-[22px] border border-[#e7e6e1] bg-white p-4 shadow-[0_6px_20px_rgba(0,0,0,.04)]"><div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-[#e8f2ed] text-[#74a18f]"><FlaskConical className="h-5 w-5"/></span><div><h2 className="text-[15px] font-semibold">Serverseitiger Live-Eval</h2><p className="mt-1 text-[11px] leading-4 text-black/50">Nach dem Start läuft der Test auf dem Server weiter. Du kannst Kipu schliessen oder das Handy sperren und später hierher zurückkehren.</p></div></div>
+      <div className="mt-4 flex gap-2"><button disabled={busy||active} onClick={()=>void start()} className="flex flex-1 items-center justify-center gap-2 rounded-[14px] bg-[#74a18f] px-4 py-3 text-[12px] font-semibold text-white disabled:opacity-50">{busy||active?<LoaderCircle className="h-4 w-4 animate-spin"/>:<Play className="h-4 w-4"/>}{active?`Läuft ${run?.completed??0}/${run?.total??runnable.length}`:`P0 Live-Eval starten (${runnable.length})`}</button><button onClick={()=>void refresh(runId)} disabled={busy} aria-label="Status aktualisieren" className="flex h-11 w-11 items-center justify-center rounded-[14px] border border-[#e7e6e1] bg-white text-black/45 disabled:opacity-40"><RefreshCw className={`h-4 w-4 ${busy?"animate-spin":""}`}/></button></div>
+      {runId&&<p className="mt-2 break-all text-[9px] text-black/30">Run {runId}</p>}{error&&<p className="mt-2 text-[10px] text-[#b94b43]">{error}</p>}
+    </section>
+
+    {run&&<section className="mt-4 rounded-[22px] border border-[#e7e6e1] bg-white p-4"><div className="flex items-end justify-between"><div><p className="text-[11px] text-black/45">Gesamtergebnis</p><p className="mt-0.5 text-[28px] font-semibold tracking-[-.04em]">{run.completed?`${rate}%`:"…"}</p></div><p className="text-right text-[11px] font-medium text-black/50">{passed} bestanden · {failed} nicht bestanden<br/>{run.completed}/{run.total}</p></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-[#ecebe7]"><div className="h-full bg-[#74a18f] transition-all" style={{width:`${run.total?Math.round(run.completed/run.total*100):0}%`}}/></div><div className="mt-2 flex items-center justify-between text-[10px] text-black/40"><span>{run.status==="completed"?"Abgeschlossen":run.status==="failed"?"Abgebrochen":run.status==="running"?"Läuft auf dem Server":"In Warteschlange"}</span>{run.current&&<span className="max-w-[55%] truncate">{run.current}</span>}</div>{run.error&&<p className="mt-2 text-[10px] text-[#b94b43]">{run.error}</p>}</section>}
+
     <section className="mt-4 space-y-2">{results.map(r=><details key={r.id} className="rounded-[17px] border border-[#e8e7e2] bg-white px-3.5 py-3"><summary className="flex cursor-pointer list-none items-center gap-2"><span className={r.status==="pass"?"text-[#74a18f]":"text-[#b94b43]"}>{r.status==="pass"?<CheckCircle2 className="h-4 w-4"/>:<XCircle className="h-4 w-4"/>}</span><span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{r.id}</span><span className="text-[10px] text-black/35">{(r.duration_ms/1000).toFixed(1)}s</span></summary><div className="mt-2 border-t border-[#efeee9] pt-2">{r.error?<p className="text-[10px] text-[#b94b43]">{r.error}</p>:r.assertions.map((a,i)=><div key={i} className="flex items-start gap-2 py-1 text-[10px]"><span>{a.pass?"✅":"❌"}</span><div><p>{a.name}</p>{!a.pass&&<p className="mt-0.5 break-all text-black/40">Ist: {JSON.stringify(a.actual)} · Soll: {JSON.stringify(a.expected)}</p>}</div></div>)}</div></details>)}</section>
+
+    {!run&&!busy&&<p className="mt-6 text-center text-[10px] leading-4 text-black/35">Noch kein persistierter Eval-Run vorhanden.</p>}
   </main>
 }
