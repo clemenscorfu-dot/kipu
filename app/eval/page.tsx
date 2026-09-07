@@ -4,7 +4,7 @@ import Link from "next/link";
 import {ArrowLeft,CheckCircle2,FlaskConical,LoaderCircle,Play,RefreshCw,XCircle} from "lucide-react";
 import {useCallback,useEffect,useMemo,useState} from "react";
 import goldenCases from "@/evals/golden-cases.json";
-import {ensureAnonymousSession} from "@/lib/supabase-browser";
+import {ensureAnonymousSession,refreshAnonymousSession} from "@/lib/supabase-browser";
 
 type EvalCase={id:string;area:string;eval_type:string;input:string;priority:"P0"|"P1"|"P2"};
 type Assertion={name:string;pass:boolean;actual?:unknown;expected?:unknown};
@@ -16,7 +16,7 @@ export default function EvalPage(){
   const runnable=useMemo(()=>(goldenCases as EvalCase[]).filter(c=>c.eval_type==="capture"&&c.priority==="P0"),[]);
   const active=run?.status==="queued"||run?.status==="running";
 
-  const request=useCallback(async(method:"GET"|"POST",id?:string)=>{const session=await ensureAnonymousSession(),url=id?`/api/eval/run?id=${encodeURIComponent(id)}`:"/api/eval/run",r=await fetch(url,{method,cache:"no-store",headers:{Authorization:`Bearer ${session.access_token}`,"Content-Type":"application/json","Cache-Control":"no-cache"}}),d=await r.json();if(!r.ok)throw new Error(d.error??`Eval ${r.status}`);return d},[]);
+  const request=useCallback(async(method:"GET"|"POST",id?:string)=>{const session=method==="POST"?await refreshAnonymousSession():await ensureAnonymousSession(),url=id?`/api/eval/run?id=${encodeURIComponent(id)}`:"/api/eval/run",r=await fetch(url,{method,cache:"no-store",headers:{Authorization:`Bearer ${session.access_token}`,"Content-Type":"application/json","Cache-Control":"no-cache"}}),d=await r.json();if(!r.ok)throw new Error(d.error??`Eval ${r.status}`);return d},[]);
   const refresh=useCallback(async(id?:string)=>{try{setError("");const d=await request("GET",id);if(d.run_id)setRunId(String(d.run_id));setRun(d.run??null)}catch(e){setError(e instanceof Error?e.message:"Status konnte nicht geladen werden")}finally{setBusy(false)}},[request]);
 
   useEffect(()=>{void refresh()},[refresh]);
