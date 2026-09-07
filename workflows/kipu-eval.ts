@@ -5,8 +5,8 @@ type EvalCase={id:string;area:string;eval_type:string;input:string;capture_locat
 type Assertion={name:string;pass:boolean;actual?:unknown;expected?:unknown};
 type EvalResult={id:string;area:string;status:"pass"|"fail"|"error";duration_ms:number;assertions:Assertion[];error?:string};
 type EvalRun={status:"queued"|"running"|"completed"|"failed";created_at:string;started_at?:string;finished_at?:string;total:number;completed:number;passed:number;failed:number;pass_rate:number;current?:string;results:EvalResult[];error?:string;workflow_run_id?:string};
-type WorkflowArgs={origin:string;token:string;userId:string;runId:string};
-const CASES=(goldenCases as EvalCase[]).filter(c=>c.eval_type==="capture"&&c.priority==="P0");
+type WorkflowArgs={origin:string;token:string;userId:string;runId:string;caseIds?:string[]};
+const ALL_CASES=(goldenCases as EvalCase[]).filter(c=>c.eval_type==="capture"&&c.priority==="P0");
 const PARALLELISM=4;
 
 function client(token:string){const url=process.env.NEXT_PUBLIC_SUPABASE_URL,key=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;if(!url||!key)throw new Error("missing_supabase_config");return createClient(url,key,{global:{headers:{Authorization:`Bearer ${token}`}},auth:{persistSession:false,autoRefreshToken:false}})}
@@ -52,15 +52,15 @@ async function executeCase(args:WorkflowArgs,c:EvalCase):Promise<EvalResult>{
 
 export async function kipuEvalWorkflow(args:WorkflowArgs,initial:EvalRun){
   "use workflow";
+  const selected=args.caseIds?.length?ALL_CASES.filter(c=>args.caseIds!.includes(c.id)):ALL_CASES;
   const results=[...(initial.results??[])];
-  let run=summarize(initial,results,{status:"running",started_at:initial.started_at??new Date().toISOString(),error:undefined});
+  let run=summarize({...initial,total:selected.length},results,{status:"running",started_at:initial.started_at??new Date().toISOString(),error:undefined});
   await saveProgress(args,run);
 
-  for(let i=results.length;i<CASES.length;i+=PARALLELISM){
-    const batch=CASES.slice(i,i+PARALLELISM);
+  for(let i=results.length;i<selected.length;i+=PARALLELISM){
+    const batch=selected.slice(i,i+PARALLELISM);
     run=summarize(run,results,{status:"running",current:batch.map(c=>c.id).join(", ")});
     await saveProgress(args,run);
-
     const batchResults=await Promise.all(batch.map(c=>executeCase(args,c)));
     results.push(...batchResults);
     run=summarize(run,results,{status:"running",current:""});
