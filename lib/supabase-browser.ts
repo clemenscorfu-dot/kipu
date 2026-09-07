@@ -28,4 +28,13 @@ export function ensureAnonymousSession() {
   return sessionPromise;
 }
 
+export async function refreshAnonymousSession() {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.auth.refreshSession();
+  if (error) throw error;
+  if (!data.session) throw new Error("Anonymous session could not be refreshed.");
+  sessionPromise = Promise.resolve(data.session);
+  return data.session;
+}
+
 export function warmAnonymousSession(){void ensureAnonymousSession()}
