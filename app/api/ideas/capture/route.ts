@@ -7,6 +7,7 @@ import { buildMemoryRelations } from "@/lib/kipu-memory-graph";
 import { ensurePlaceEnrichment } from "@/lib/kipu-place-enrichment";
 import { curateIdeaHeroImage } from "@/lib/kipu-image-curation";
 import { persistIdeaHeroImage } from "@/lib/kipu-image-storage";
+import { ensureOpenIntent } from "@/lib/kipu-open-intent";
 
 export const maxDuration=300;
 
@@ -20,6 +21,11 @@ async function backgroundEnrich(payload:EnrichIdeaPayload){
   try{
     const result=await enrichPendingIdea(payload);
     const ideaId=result.ideaId;
+    // Preserve explicit open user actions as structured memory metadata. This is intentionally deterministic and conservative.
+    try{
+      const intent=await ensureOpenIntent(s,payload.userId,ideaId);
+      console.info("Kipu open intent",{ideaId,...intent});
+    }catch(e){console.error("Post-enrichment intent step failed",e)}
     // Curate the hero for memorability, not just factual relevance. Concrete entities stay exact; broader ideas may use an attractive representative scene.
     try{
       const curated=await curateIdeaHeroImage(s,payload.userId,openAiKey,ideaId);
